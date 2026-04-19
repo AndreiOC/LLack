@@ -26,46 +26,84 @@
 - **Resolution:** Switched to manual entity implementation (no freezed/codegen)
 - **Impact:** Minimal - copyWith, fromJson, toJson implemented manually
 
-### Completed (continued):
-8. ✅ DAO Layer (5 DAOs, ~1,500 lines)
-9. ✅ SecureStorageService (flutter_secure_storage wrapper)
-10. ✅ Repository Layer (3 repositories)
-
 ### Commits:
 - `04d043f` — Phase 0: Foundation
-- `d098593` — Phase 1 WIP: DAOs + Repositories
-
-### Current Phase 1 Progress:
-- [x] Database layer
-- [x] Secure storage
-- [x] Repositories
-- [ ] Riverpod providers
-- [ ] App bootstrap
-- [ ] Onboarding UI
+- `d098593` — Phase 1 WIP: DAOs + Repositories  
+- `1bb3480` — Phase 1 Complete: Riverpod + App bootstrap
 
 ---
 
-## Project Structure (per spec section 3.3)
+## Phase 1: Core Persistence And Provider Setup ✅ COMPLETE
+
+| Component | Status |
+|-----------|--------|
+| ProviderDao | ✅ CRUD, soft delete, health tracking |
+| ConversationDao | ✅ CRUD, pin/archive/search/pagination |
+| MessageDao | ✅ CRUD, streaming updates, batch insert |
+| OutboxJobDao | ✅ Queue management, exponential backoff |
+| AppSettingDao | ✅ Settings, onboarding helpers |
+| SecureStorageService | ✅ API key management |
+| ProviderRepository | ✅ DAO + SecureStorage |
+| ConversationRepository | ✅ DAO wrapper |
+| MessageRepository | ✅ DAO wrapper + sendMessage transaction |
+| Riverpod Providers | ✅ Database, Repositories, SecureStorage |
+| App Bootstrap | ✅ main.dart with ProviderScope |
+
+---
+
+## Phase 2: Core Chat — IN PROGRESS
+
+| Component | Status |
+|-----------|--------|
+| Provider adapter interface | ⏳ In progress |
+| Ollama adapter | ⏳ Pending |
+| OpenAI-compatible adapter | ⏳ Pending |
+| HTTP streaming (Dio) | ⏳ Pending |
+| Chat UI (composer, messages) | ⏳ Pending |
+| Conversation list screen | ⏳ Pending |
+
+---
+
+## Project Structure
 
 ```
 lib/
-├── app/                    # App shell
-├── bootstrap/              # Initialization
-├── core/                   # Constants, errors, logging
+├── app/
+│   └── providers/          # ✅ Riverpod providers
+├── bootstrap/
+├── core/
+│   ├── constants/
+│   ├── errors/
+│   ├── logging/
+│   └── utils/
 ├── data/
 │   ├── db/
-│   │   ├── migrations/     # 001_initial_schema.sql ✅
+│   │   ├── migrations/     # ✅ 001_initial_schema.sql
+│   │   ├── dao/            # ✅ 5 DAOs complete
 │   │   └── database_config.dart ✅
 │   ├── models/
-│   └── repositories/
+│   └── repositories/       # ✅ 3 repositories
 ├── domain/
-│   └── entities/           # ✅ All 6 entities complete
-└── features/
-    ├── onboarding/
-    ├── providers/
-    ├── chat/
-    ├── conversations/
-    ├── usage/
-    └── settings/
+│   └── entities/           # ✅ 6 entities complete
+├── features/
+│   ├── onboarding/         # ⏳ Pending
+│   ├── providers/          # ⏳ Pending
+│   ├── chat/               # ⏳ Pending
+│   ├── conversations/      # ⏳ Pending
+│   ├── usage/
+│   └── settings/
+└── platform/
+    ├── background/
+    ├── notifications/
+    └── secure_storage/     # ✅ SecureStorageService
 ```
 
+---
+
+## Git History
+
+```
+1bb3480 Phase 1 Complete: Riverpod providers + App bootstrap
+d098593 Phase 1 WIP: DAO layer + SecureStorage + Repositories
+04d043f Phase 0: Foundation - Project structure, database schema, domain entities
+```

@@ -1,3 +1,17 @@
+/// Provider kind enum
+enum ProviderKind {
+  ollama,
+  openaiCompatible,
+}
+
+/// Provider health status enum
+enum ProviderHealthStatus {
+  healthy,
+  degraded,
+  unreachable,
+  neverChecked,
+}
+
 /// Provider entity representing an LLM provider configuration
 class Provider {
   final String id;
@@ -121,18 +135,4 @@ class Provider {
   bool get isHealthy => healthStatus == ProviderHealthStatus.healthy;
   bool get requiresApiKey => kind == ProviderKind.openaiCompatible;
   bool get isOllama => kind == ProviderKind.ollama;
-}
-
-/// Provider kind enum
-enum ProviderKind {
-  ollama,
-  openaiCompatible,
-}
-
-/// Provider health status enum
-enum ProviderHealthStatus {
-  healthy,
-  degraded,
-  unreachable,
-  neverChecked,
 }
