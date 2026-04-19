@@ -27,19 +27,21 @@
 - **Impact:** Minimal - copyWith, fromJson, toJson implemented manually
 
 ### Completed (continued):
-8. ✅ DAO Layer (5 DAOs, 1,500+ lines)
-   - ProviderDao with soft delete & health tracking
-   - ConversationDao with pin/archive/search
-   - MessageDao with streaming updates
-   - OutboxJobDao with exponential backoff retry
-   - AppSettingDao with onboarding helpers
+8. ✅ DAO Layer (5 DAOs, ~1,500 lines)
 9. ✅ SecureStorageService (flutter_secure_storage wrapper)
+10. ✅ Repository Layer (3 repositories)
 
-### Next:
-- Repository layer (combining DAO + SecureStorage)
-- App bootstrap & Riverpod providers
-- Onboarding flow UI
-- Provider management screens
+### Commits:
+- `04d043f` — Phase 0: Foundation
+- `d098593` — Phase 1 WIP: DAOs + Repositories
+
+### Current Phase 1 Progress:
+- [x] Database layer
+- [x] Secure storage
+- [x] Repositories
+- [ ] Riverpod providers
+- [ ] App bootstrap
+- [ ] Onboarding UI
 
 ---
 
