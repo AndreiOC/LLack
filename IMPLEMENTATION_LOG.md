@@ -30,6 +30,7 @@
 - `04d043f` — Phase 0: Foundation
 - `d098593` — Phase 1 WIP: DAOs + Repositories  
 - `1bb3480` — Phase 1 Complete: Riverpod + App bootstrap
+- `355220c` — Phase 2 WIP: Provider adapters
 
 ---
 
@@ -55,12 +56,16 @@
 
 | Component | Status |
 |-----------|--------|
-| Provider adapter interface | ⏳ In progress |
-| Ollama adapter | ⏳ Pending |
-| OpenAI-compatible adapter | ⏳ Pending |
-| HTTP streaming (Dio) | ⏳ Pending |
+| ChatProviderAdapter interface | ✅ Complete |
+| Ollama adapter | ✅ Streaming + health checks |
+| OpenAI-compatible adapter | ✅ SSE streaming, validation |
+| AdapterFactory | ✅ Provider creation |
+| HTTP streaming (Dio) | ✅ ResponseBody streams |
+| Chat Service | ⏳ In progress |
 | Chat UI (composer, messages) | ⏳ Pending |
 | Conversation list screen | ⏳ Pending |
+| Markdown rendering | ⏳ Pending |
+| Code highlighting | ⏳ Pending |
 
 ---
 
@@ -82,14 +87,17 @@ lib/
 │   │   ├── dao/            # ✅ 5 DAOs complete
 │   │   └── database_config.dart ✅
 │   ├── models/
-│   └── repositories/       # ✅ 3 repositories
+│   ├── repositories/       # ✅ 3 repositories
+│   └── services/
+│       └── adapters/       # ✅ Ollama + OpenAI adapters
 ├── domain/
-│   └── entities/           # ✅ 6 entities complete
+│   ├── entities/           # ✅ 6 entities
+│   └── interfaces/         # ✅ ChatProviderAdapter
 ├── features/
 │   ├── onboarding/         # ⏳ Pending
 │   ├── providers/          # ⏳ Pending
-│   ├── chat/               # ⏳ Pending
-│   ├── conversations/      # ⏳ Pending
+│   ├── chat/               # ⏳ In progress
+│   ├── conversations/        # ⏳ Pending
 │   ├── usage/
 │   └── settings/
 └── platform/
@@ -103,7 +111,18 @@ lib/
 ## Git History
 
 ```
+355220c Phase 2 WIP: Provider adapters (Ollama + OpenAI-compatible)
 1bb3480 Phase 1 Complete: Riverpod providers + App bootstrap
 d098593 Phase 1 WIP: DAO layer + SecureStorage + Repositories
 04d043f Phase 0: Foundation - Project structure, database schema, domain entities
 ```
+
+---
+
+## Next Steps (Phase 2 completion)
+
+1. ChatService - orchestrates adapters + repositories
+2. Chat UI screens (conversation list, chat detail)
+3. Message composer with markdown support
+4. Streaming message display
+5. Provider selector UI
