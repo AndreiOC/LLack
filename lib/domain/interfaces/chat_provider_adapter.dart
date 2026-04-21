@@ -24,13 +24,13 @@ class ProviderValidationResult {
 
 /// Request for chat completion
 class ChatRequest {
-  final String providerId;
+  final String baseUrl;
   final String modelId;
   final List<ChatMessage> messages;
   final Map<String, dynamic>? parameters;
 
   ChatRequest({
-    required this.providerId,
+    required this.baseUrl,
     required this.modelId,
     required this.messages,
     this.parameters,

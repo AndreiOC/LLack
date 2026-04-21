@@ -108,7 +108,7 @@ class OllamaAdapter implements ChatProviderAdapter {
       ChatRequest request, String apiKey) async* {
     try {
       final response = await _dio.post<ResponseBody>(
-        '${request.providerId}/api/chat',
+        '${request.baseUrl}/api/chat',
         data: {
           'model': request.modelId,
           'messages': request.messages.map((m) => m.toJson()).toList(),
@@ -174,7 +174,7 @@ class OllamaAdapter implements ChatProviderAdapter {
   ) async {
     try {
       final response = await _dio.post(
-        '${request.providerId}/api/chat',
+        '${request.baseUrl}/api/chat',
         data: {
           'model': request.modelId,
           'messages': request.messages.map((m) => m.toJson()).toList(),

@@ -124,7 +124,7 @@ class ChatService {
 
     // Create request
     final request = ChatRequest(
-      providerId: provider.baseUrl,
+      baseUrl: provider.baseUrl,
       modelId: modelId,
       messages: messages,
       parameters: parameters ?? provider.settings,

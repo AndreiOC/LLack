@@ -128,7 +128,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
       ChatRequest request, String apiKey) async* {
     try {
       final response = await _dio.post<ResponseBody>(
-        '${request.providerId}/chat/completions',
+        '${request.baseUrl}/chat/completions',
         data: {
           'model': request.modelId,
           'messages': request.messages.map((m) => m.toJson()).toList(),
@@ -213,7 +213,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
   ) async {
     try {
       final response = await _dio.post(
-        '${request.providerId}/chat/completions',
+        '${request.baseUrl}/chat/completions',
         data: {
           'model': request.modelId,
           'messages': request.messages.map((m) => m.toJson()).toList(),
