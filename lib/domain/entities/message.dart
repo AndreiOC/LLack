@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Message entity representing a chat message
 class Message {
   final String id;
@@ -63,10 +65,12 @@ class Message {
         errorCode: json['error_code'] as String?,
         errorMessage: json['error_message'] as String?,
         responseMetadata: json['response_metadata_json'] != null
-            ? Map<String, dynamic>.from(json['response_metadata_json'] as Map)
+            ? _decodeResponseMetadata(json['response_metadata_json'])
             : null,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
+        updatedAt:
+            DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
       );
 
   Map<String, dynamic> toJson() => {
@@ -85,7 +89,8 @@ class Message {
         'estimated_cost_micros': estimatedCostMicros,
         'error_code': errorCode,
         'error_message': errorMessage,
-        'response_metadata_json': responseMetadata,
+        'response_metadata_json':
+            responseMetadata != null ? jsonEncode(responseMetadata) : null,
         'created_at': createdAt.millisecondsSinceEpoch,
         'updated_at': updatedAt.millisecondsSinceEpoch,
       };
@@ -146,7 +151,8 @@ class Message {
     Map<String, dynamic>? responseMetadata,
     DateTime? createdAt,
     DateTime? updatedAt,
-  }) => Message(
+  }) =>
+      Message(
         id: id ?? this.id,
         conversationId: conversationId ?? this.conversationId,
         role: role ?? this.role,
@@ -171,10 +177,33 @@ class Message {
   bool get isAssistant => role == MessageRole.assistant;
   bool get isSystem => role == MessageRole.system;
   bool get isEditable => isUser && status == MessageStatus.completed;
-  bool get canRetry => status == MessageStatus.failed || status == MessageStatus.cancelled;
+  bool get canRetry =>
+      status == MessageStatus.failed || status == MessageStatus.cancelled;
   bool get isStreaming => status == MessageStatus.streaming;
-  bool get isFinal => status == MessageStatus.completed || status == MessageStatus.failed || status == MessageStatus.cancelled;
+  bool get isFinal =>
+      status == MessageStatus.completed ||
+      status == MessageStatus.failed ||
+      status == MessageStatus.cancelled;
   bool get hasTokens => inputTokens != null || outputTokens != null;
+}
+
+Map<String, dynamic> _decodeResponseMetadata(Object value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return Map<String, dynamic>.from(value);
+  }
+  if (value is String && value.isNotEmpty) {
+    final decoded = jsonDecode(value);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+  }
+  return const {};
 }
 
 /// Message role enum

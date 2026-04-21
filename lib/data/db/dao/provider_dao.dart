@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import '../../domain/entities/entities.dart';
+import '../../../domain/entities/entities.dart';
 
 /// Data Access Object for Provider operations
 class ProviderDao {
@@ -8,10 +8,20 @@ class ProviderDao {
   ProviderDao(this._db);
 
   /// Get all non-deleted providers ordered by last updated
-  Future<List<Provider>> getAll() async {
+  Future<List<Provider>> getAll({bool includeDeleted = false}) async {
     final maps = await _db.query(
       'providers',
-      where: 'deleted_at IS NULL',
+      where: includeDeleted ? null : 'deleted_at IS NULL',
+      orderBy: 'updated_at DESC',
+    );
+    return maps.map((m) => Provider.fromJson(m)).toList();
+  }
+
+  /// Get soft-deleted providers ordered by last updated
+  Future<List<Provider>> getDeleted() async {
+    final maps = await _db.query(
+      'providers',
+      where: 'deleted_at IS NOT NULL',
       orderBy: 'updated_at DESC',
     );
     return maps.map((m) => Provider.fromJson(m)).toList();
@@ -96,7 +106,7 @@ class ProviderDao {
     await _db.update(
       'providers',
       {
-        'health_status': status.name,
+        'health_status': _healthStatusToStorage(status),
         'health_checked_at': now,
         'updated_at': now,
       },
@@ -110,8 +120,30 @@ class ProviderDao {
     final maps = await _db.query(
       'providers',
       where: 'kind = ? AND deleted_at IS NULL',
-      whereArgs: [ProviderKind.ollama.name],
+      whereArgs: [_providerKindToStorage(ProviderKind.ollama)],
     );
     return maps.map((m) => Provider.fromJson(m)).toList();
+  }
+
+  String _providerKindToStorage(ProviderKind value) {
+    switch (value) {
+      case ProviderKind.ollama:
+        return 'ollama';
+      case ProviderKind.openaiCompatible:
+        return 'openai_compatible';
+    }
+  }
+
+  String _healthStatusToStorage(ProviderHealthStatus value) {
+    switch (value) {
+      case ProviderHealthStatus.healthy:
+        return 'healthy';
+      case ProviderHealthStatus.degraded:
+        return 'degraded';
+      case ProviderHealthStatus.unreachable:
+        return 'unreachable';
+      case ProviderHealthStatus.neverChecked:
+        return 'never_checked';
+    }
   }
 }

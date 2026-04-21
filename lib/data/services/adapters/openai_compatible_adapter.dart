@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
-import '../../domain/entities/entities.dart';
-import '../../domain/interfaces/chat_provider_adapter.dart';
+import '../../../domain/entities/entities.dart';
+import '../../../domain/interfaces/chat_provider_adapter.dart';
 
 /// Adapter for OpenAI-compatible APIs
 /// Works with OpenAI, OpenRouter, Groq, and other compatible providers
@@ -27,17 +27,19 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
 
       if (response.statusCode == 200) {
         return ProviderValidationResult.success(
-          metadata: {'models_available': (response.data['data'] as List?)?.length ?? 0},
+          metadata: {
+            'models_available': (response.data['data'] as List?)?.length ?? 0
+          },
         );
       }
-      
+
       // Some providers don't have /models endpoint, try a minimal completion
       if (response.statusCode == 404) {
         return ProviderValidationResult.success(
           metadata: {'note': 'Models endpoint not available, assuming valid'},
         );
       }
-      
+
       return ProviderValidationResult.failure(
         'Invalid response: ${response.statusCode}',
       );
@@ -72,7 +74,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
 
       final data = response.data as Map<String, dynamic>;
       final models = data['data'] as List<dynamic>? ?? [];
-      
+
       return models.map((m) {
         final id = m['id'] as String;
         return ProviderModel.fromProviderResponse(
@@ -122,7 +124,8 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
   }
 
   @override
-  Stream<ChatStreamEvent> streamChat(ChatRequest request, String apiKey) async* {
+  Stream<ChatStreamEvent> streamChat(
+      ChatRequest request, String apiKey) async* {
     try {
       final response = await _dio.post<ResponseBody>(
         '${request.providerId}/chat/completions',
@@ -149,25 +152,24 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
         return;
       }
 
-      String accumulatedContent = '';
       Map<String, dynamic>? finalMetadata;
 
-      await for (final chunk in stream.transform(utf8.decoder)) {
+      await for (final chunk in stream.map((bytes) => utf8.decode(bytes))) {
         final lines = chunk.split('\n').where((l) => l.trim().isNotEmpty);
-        
+
         for (final line in lines) {
           // Skip "data: " prefix and "[DONE]" marker
           if (!line.startsWith('data: ')) continue;
-          
+
           final jsonStr = line.substring(6).trim();
           if (jsonStr == '[DONE]') {
             yield ChatStreamEvent.done(metadata: finalMetadata);
             return;
           }
-          
+
           try {
             final data = jsonDecode(jsonStr) as Map<String, dynamic>;
-            
+
             // Extract usage from final chunk if available
             final usage = data['usage'] as Map<String, dynamic>?;
             if (usage != null) {
@@ -177,14 +179,13 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
                 'total_tokens': usage['total_tokens'],
               };
             }
-            
+
             final choices = data['choices'] as List<dynamic>?;
             if (choices != null && choices.isNotEmpty) {
               final delta = choices[0]['delta'] as Map<String, dynamic>?;
               final content = delta?['content'] as String?;
-              
+
               if (content != null && content.isNotEmpty) {
-                accumulatedContent += content;
                 yield ChatStreamEvent.delta(content);
               }
             }
@@ -233,7 +234,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
       final choices = data['choices'] as List<dynamic>?;
       final message = choices?.firstOrNull?['message'] as Map<String, dynamic>?;
       final content = message?['content'] as String? ?? '';
-      
+
       final usage = data['usage'] as Map<String, dynamic>?;
 
       return ChatCompletionResult(
@@ -251,19 +252,19 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
     final headers = <String, String>{
       'Content-Type': 'application/json',
     };
-    
+
     // Note: API key should be passed separately, not stored in provider
     // This is for headers defined in provider config
     if (provider.headers.isNotEmpty) {
       headers.addAll(provider.headers);
     }
-    
+
     return headers;
   }
 
   Map<String, dynamic> _buildParameters(Map<String, dynamic>? params) {
     final result = <String, dynamic>{};
-    
+
     if (params != null) {
       // Include common parameters
       if (params.containsKey('temperature')) {
@@ -276,7 +277,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
         result['top_p'] = params['top_p'];
       }
     }
-    
+
     return result;
   }
 
@@ -284,7 +285,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
     // Try to extract from various provider-specific fields
     final contextWindow = model['context_window'] ?? model['context_length'];
     if (contextWindow is int) return contextWindow;
-    
+
     // Extract from model ID hints
     final id = model['id'] as String? ?? '';
     if (id.contains('128k') || id.contains('128000')) return 128000;
@@ -292,7 +293,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
     if (id.contains('16k') || id.contains('16000')) return 16000;
     if (id.contains('8k') || id.contains('8000')) return 8000;
     if (id.contains('4k') || id.contains('4000')) return 4000;
-    
+
     return null;
   }
 }

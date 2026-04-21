@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite/sqflite.dart';
 
 /// Database configuration and initialization
 class DatabaseConfig {
@@ -23,12 +22,13 @@ class DatabaseConfig {
     return join(directory.path, databaseName);
   }
 
-  /// Database configuration options
-  static DatabaseOptions get options => DatabaseOptions(
-        version: databaseVersion,
-        onCreate: _onCreate,
-        onUpgrade: _onUpgrade,
-      );
+  /// Database onCreate callback
+  static Future<void> onCreate(Database db, int version) =>
+      _onCreate(db, version);
+
+  /// Database onUpgrade callback
+  static Future<void> onUpgrade(Database db, int oldVersion, int newVersion) =>
+      _onUpgrade(db, oldVersion, newVersion);
 
   /// Called when database is created for the first time
   static Future<void> _onCreate(Database db, int version) async {
@@ -37,7 +37,8 @@ class DatabaseConfig {
   }
 
   /// Called when database needs to be upgraded
-  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+  static Future<void> _onUpgrade(
+      Database db, int oldVersion, int newVersion) async {
     // Future migrations will be executed here
     for (int i = oldVersion + 1; i <= newVersion; i++) {
       final migrationFile = '${i.toString().padLeft(3, '0')}_migration.sql';
@@ -157,20 +158,47 @@ class DatabaseConfig {
     ''');
 
     // Indexes
-    await db.execute('CREATE INDEX idx_conversations_updated_at ON conversations(updated_at DESC)');
-    await db.execute('CREATE INDEX idx_conversations_deleted_at ON conversations(deleted_at)');
-    await db.execute('CREATE INDEX idx_messages_conversation_id_sequence_no ON messages(conversation_id, sequence_no)');
-    await db.execute('CREATE INDEX idx_messages_generation_group_id ON messages(generation_group_id)');
-    await db.execute('CREATE INDEX idx_messages_created_at ON messages(created_at)');
-    await db.execute('CREATE INDEX idx_outbox_jobs_status_next_retry_at ON outbox_jobs(status, next_retry_at)');
-    await db.execute('CREATE INDEX idx_provider_models_provider_id_last_used_at ON provider_models(provider_id, last_used_at)');
+    await db.execute(
+        'CREATE INDEX idx_conversations_updated_at ON conversations(updated_at DESC)');
+    await db.execute(
+        'CREATE INDEX idx_conversations_deleted_at ON conversations(deleted_at)');
+    await db.execute(
+        'CREATE INDEX idx_messages_conversation_id_sequence_no ON messages(conversation_id, sequence_no)');
+    await db.execute(
+        'CREATE INDEX idx_messages_generation_group_id ON messages(generation_group_id)');
+    await db.execute(
+        'CREATE INDEX idx_messages_created_at ON messages(created_at)');
+    await db.execute(
+        'CREATE INDEX idx_outbox_jobs_status_next_retry_at ON outbox_jobs(status, next_retry_at)');
+    await db.execute(
+        'CREATE INDEX idx_provider_models_provider_id_last_used_at ON provider_models(provider_id, last_used_at)');
 
     // Initial app settings
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.insert('app_settings', {'key': 'has_completed_onboarding', 'value_json': 'false', 'updated_at': now});
-    await db.insert('app_settings', {'key': 'skip_cloud_providers', 'value_json': 'false', 'updated_at': now});
-    await db.insert('app_settings', {'key': 'monthly_spend_threshold', 'value_json': 'null', 'updated_at': now});
-    await db.insert('app_settings', {'key': 'show_code_line_numbers', 'value_json': 'false', 'updated_at': now});
-    await db.insert('app_settings', {'key': 'last_successful_ollama_endpoint', 'value_json': 'null', 'updated_at': now});
+    await db.insert('app_settings', {
+      'key': 'has_completed_onboarding',
+      'value_json': 'false',
+      'updated_at': now
+    });
+    await db.insert('app_settings', {
+      'key': 'skip_cloud_providers',
+      'value_json': 'false',
+      'updated_at': now
+    });
+    await db.insert('app_settings', {
+      'key': 'monthly_spend_threshold',
+      'value_json': 'null',
+      'updated_at': now
+    });
+    await db.insert('app_settings', {
+      'key': 'show_code_line_numbers',
+      'value_json': 'false',
+      'updated_at': now
+    });
+    await db.insert('app_settings', {
+      'key': 'last_successful_ollama_endpoint',
+      'value_json': 'null',
+      'updated_at': now
+    });
   }
 }

@@ -15,6 +15,12 @@ final providerDaoProvider = FutureProvider<ProviderDao>((ref) async {
   return ProviderDao(db);
 });
 
+/// App setting DAO provider
+final appSettingDaoProvider = FutureProvider<AppSettingDao>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  return AppSettingDao(db);
+});
+
 /// Conversation DAO provider
 final conversationDaoProvider = FutureProvider<ConversationDao>((ref) async {
   final db = await ref.watch(databaseProvider.future);
@@ -28,20 +34,23 @@ final messageDaoProvider = FutureProvider<MessageDao>((ref) async {
 });
 
 /// Provider repository provider
-final providerRepositoryProvider = FutureProvider<ProviderRepository>((ref) async {
+final providerRepositoryProvider =
+    FutureProvider<ProviderRepository>((ref) async {
   final dao = await ref.watch(providerDaoProvider.future);
   final secureStorage = ref.watch(secureStorageProvider);
   return ProviderRepository(dao, secureStorage);
 });
 
 /// Conversation repository provider
-final conversationRepositoryProvider = FutureProvider<ConversationRepository>((ref) async {
+final conversationRepositoryProvider =
+    FutureProvider<ConversationRepository>((ref) async {
   final dao = await ref.watch(conversationDaoProvider.future);
   return ConversationRepository(dao);
 });
 
 /// Message repository provider
-final messageRepositoryProvider = FutureProvider<MessageRepository>((ref) async {
+final messageRepositoryProvider =
+    FutureProvider<MessageRepository>((ref) async {
   final dao = await ref.watch(messageDaoProvider.future);
   return MessageRepository(dao);
 });

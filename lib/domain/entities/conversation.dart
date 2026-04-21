@@ -1,5 +1,7 @@
 /// Conversation entity representing a chat session
 class Conversation {
+  static const Object _sentinel = Object();
+
   final String id;
   final String title;
   final String? selectedProviderId;
@@ -36,8 +38,10 @@ class Conversation {
         deletedAt: json['deleted_at'] != null
             ? DateTime.fromMillisecondsSinceEpoch(json['deleted_at'] as int)
             : null,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
+        updatedAt:
+            DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
       );
 
   Map<String, dynamic> toJson() => {
@@ -70,21 +74,32 @@ class Conversation {
   Conversation copyWith({
     String? id,
     String? title,
-    String? selectedProviderId,
-    String? selectedModelId,
-    DateTime? pinnedAt,
-    DateTime? archivedAt,
-    DateTime? deletedAt,
+    Object? selectedProviderId = _sentinel,
+    Object? selectedModelId = _sentinel,
+    Object? pinnedAt = _sentinel,
+    Object? archivedAt = _sentinel,
+    Object? deletedAt = _sentinel,
     DateTime? createdAt,
     DateTime? updatedAt,
-  }) => Conversation(
+  }) =>
+      Conversation(
         id: id ?? this.id,
         title: title ?? this.title,
-        selectedProviderId: selectedProviderId ?? this.selectedProviderId,
-        selectedModelId: selectedModelId ?? this.selectedModelId,
-        pinnedAt: pinnedAt ?? this.pinnedAt,
-        archivedAt: archivedAt ?? this.archivedAt,
-        deletedAt: deletedAt ?? this.deletedAt,
+        selectedProviderId: identical(selectedProviderId, _sentinel)
+            ? this.selectedProviderId
+            : selectedProviderId as String?,
+        selectedModelId: identical(selectedModelId, _sentinel)
+            ? this.selectedModelId
+            : selectedModelId as String?,
+        pinnedAt: identical(pinnedAt, _sentinel)
+            ? this.pinnedAt
+            : pinnedAt as DateTime?,
+        archivedAt: identical(archivedAt, _sentinel)
+            ? this.archivedAt
+            : archivedAt as DateTime?,
+        deletedAt: identical(deletedAt, _sentinel)
+            ? this.deletedAt
+            : deletedAt as DateTime?,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );

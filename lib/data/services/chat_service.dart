@@ -1,5 +1,4 @@
 import 'dart:async';
-import '../../app/providers/providers.dart';
 import '../../data/repositories/repositories.dart';
 import '../../data/services/adapters/adapters.dart';
 import '../../domain/entities/entities.dart';
@@ -21,8 +20,12 @@ class ChatService {
         _messageRepo = messageRepo;
 
   /// Create a new conversation and send first message
-  Future<(Conversation conversation, Message userMessage, Message assistantMessage)> 
-      createConversationAndSendMessage({
+  Future<
+      (
+        Conversation conversation,
+        Message userMessage,
+        Message assistantMessage
+      )> createConversationAndSendMessage({
     required String content,
     required String providerId,
     required String modelId,
@@ -127,12 +130,20 @@ class ChatService {
       parameters: parameters ?? provider.settings,
     );
 
+    await _messageRepo.updateStatus(
+        assistantMessageId, MessageStatus.streaming);
+
     // Stream response
     final buffer = StringBuffer();
     Map<String, dynamic>? metadata;
     String? error;
 
     await for (final event in adapter.streamChat(request, apiKey ?? '')) {
+      if (event.error != null) {
+        error = event.error;
+        break;
+      }
+
       if (event.contentDelta != null) {
         buffer.write(event.contentDelta);
         // Update streaming content periodically
@@ -141,14 +152,9 @@ class ChatService {
           buffer.toString(),
         );
       }
-      
+
       if (event.isDone) {
         metadata = event.metadata;
-        break;
-      }
-      
-      if (event.error != null) {
-        error = event.error;
         break;
       }
 
@@ -170,7 +176,8 @@ class ChatService {
         content: buffer.toString(),
         status: MessageStatus.completed,
         metadata: metadata,
-        inputTokens: metadata?['prompt_tokens'] ?? metadata?['prompt_eval_count'],
+        inputTokens:
+            metadata?['prompt_tokens'] ?? metadata?['prompt_eval_count'],
         outputTokens: metadata?['completion_tokens'] ?? metadata?['eval_count'],
       );
       yield ChatStreamEvent.done(metadata: metadata);

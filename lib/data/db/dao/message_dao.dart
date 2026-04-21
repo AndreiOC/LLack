@@ -1,5 +1,7 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
-import '../../domain/entities/entities.dart';
+import '../../../domain/entities/entities.dart';
 
 /// Data Access Object for Message operations
 class MessageDao {
@@ -72,7 +74,8 @@ class MessageDao {
   }
 
   /// Update message content (for streaming)
-  Future<void> updateContent(String id, String content, MessageStatus status) async {
+  Future<void> updateContent(
+      String id, String content, MessageStatus status) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _db.update(
       'messages',
@@ -129,7 +132,8 @@ class MessageDao {
       {
         'content_markdown': content,
         'status': status.name,
-        'response_metadata_json': metadata,
+        'response_metadata_json':
+            metadata != null ? jsonEncode(metadata) : null,
         'input_tokens': inputTokens,
         'output_tokens': outputTokens,
         'updated_at': now,
@@ -155,6 +159,15 @@ class MessageDao {
       'messages',
       where: 'conversation_id = ?',
       whereArgs: [conversationId],
+    );
+  }
+
+  /// Delete single message
+  Future<void> delete(String id) async {
+    await _db.delete(
+      'messages',
+      where: 'id = ?',
+      whereArgs: [id],
     );
   }
 

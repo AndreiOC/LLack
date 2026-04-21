@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'app/providers/providers.dart';
+import 'features/chat/chat_workspace.dart';
+import 'features/onboarding/onboarding_flow.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,20 +21,37 @@ class FossChatApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // Watch database initialization
     final databaseAsync = ref.watch(databaseProvider);
-    
+
     return MaterialApp(
       title: 'FOSS Chat',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
+          seedColor: const Color(0xFFB85C38),
           brightness: Brightness.light,
         ),
         useMaterial3: true,
+        scaffoldBackgroundColor: const Color(0xFFFFFBF7),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(20),
+            borderSide: const BorderSide(color: Color(0xFFE6D7C8)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(20),
+            borderSide: const BorderSide(color: Color(0xFFE6D7C8)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(20),
+            borderSide: const BorderSide(color: Color(0xFFB85C38)),
+          ),
+        ),
       ),
       darkTheme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
+          seedColor: const Color(0xFFB85C38),
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
@@ -68,7 +88,7 @@ class SplashScreen extends StatelessWidget {
 
 class ErrorScreen extends StatelessWidget {
   final String error;
-  
+
   const ErrorScreen({super.key, required this.error});
 
   @override
@@ -101,15 +121,27 @@ class AppShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // TODO: Implement actual app shell with navigation
-    // For now, show a placeholder
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('FOSS Chat'),
-      ),
-      body: const Center(
-        child: Text('App initialized successfully!\nPhase 0-1 complete.'),
-      ),
+    final onboardingAsync = ref.watch(onboardingProvider);
+    final providersAsync = ref.watch(providerManagementProvider);
+
+    return onboardingAsync.when(
+      data: (onboardingState) {
+        if (providersAsync.hasError) {
+          return ErrorScreen(error: providersAsync.error.toString());
+        }
+
+        final providerList = providersAsync.valueOrNull;
+        final shouldShowOnboarding = onboardingState.shouldShowOnboarding ||
+            (providerList != null && providerList.isEmpty);
+
+        if (shouldShowOnboarding) {
+          return const OnboardingFlow();
+        }
+
+        return const ChatWorkspace();
+      },
+      loading: () => const SplashScreen(),
+      error: (error, _) => ErrorScreen(error: error.toString()),
     );
   }
 }

@@ -1,5 +1,5 @@
-import '../../domain/entities/entities.dart';
-import '../../domain/interfaces/chat_provider_adapter.dart';
+import '../../../domain/entities/entities.dart';
+import '../../../domain/interfaces/chat_provider_adapter.dart';
 import 'ollama_adapter.dart';
 import 'openai_compatible_adapter.dart';
 

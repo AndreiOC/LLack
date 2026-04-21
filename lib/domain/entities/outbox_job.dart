@@ -51,8 +51,10 @@ class OutboxJob {
             ? DateTime.fromMillisecondsSinceEpoch(json['next_retry_at'] as int)
             : null,
         lastError: json['last_error'] as String?,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
+        updatedAt:
+            DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
       );
 
   Map<String, dynamic> toJson() => {
@@ -75,7 +77,8 @@ class OutboxJob {
     required String messageId,
     required String providerId,
     required Map<String, dynamic> payload,
-  }) => OutboxJob(
+  }) =>
+      OutboxJob(
         id: id,
         conversationId: conversationId,
         messageId: messageId,
@@ -98,7 +101,8 @@ class OutboxJob {
     String? lastError,
     DateTime? createdAt,
     DateTime? updatedAt,
-  }) => OutboxJob(
+  }) =>
+      OutboxJob(
         id: id ?? this.id,
         conversationId: conversationId ?? this.conversationId,
         messageId: messageId ?? this.messageId,
@@ -114,12 +118,13 @@ class OutboxJob {
 
   bool get isPending => status == OutboxJobStatus.pending;
   bool get isProcessing => status == OutboxJobStatus.processing;
-  bool get isRetryable => status == OutboxJobStatus.failed || status == OutboxJobStatus.retryWait;
+  bool get isRetryable =>
+      status == OutboxJobStatus.failed || status == OutboxJobStatus.retryWait;
   bool get isCompleted => status == OutboxJobStatus.completed;
   bool get isCancelled => status == OutboxJobStatus.cancelled;
-  
+
   bool get shouldRetry => isRetryable && retryCount < 5;
-  
+
   Duration get nextRetryDelay {
     // Exponential backoff: 2^retryCount seconds
     final seconds = 1 << retryCount;

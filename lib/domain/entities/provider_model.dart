@@ -35,8 +35,10 @@ class ProviderModel {
         lastUsedAt: json['last_used_at'] != null
             ? DateTime.fromMillisecondsSinceEpoch(json['last_used_at'] as int)
             : null,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
+        updatedAt:
+            DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
       );
 
   Map<String, dynamic> toJson() => {
@@ -60,7 +62,8 @@ class ProviderModel {
     int? contextWindow,
     bool supportsStreaming = true,
     bool supportsTools = false,
-  }) => ProviderModel(
+  }) =>
+      ProviderModel(
         id: id,
         providerId: providerId,
         remoteModelId: remoteModelId,
@@ -83,7 +86,8 @@ class ProviderModel {
     DateTime? lastUsedAt,
     DateTime? createdAt,
     DateTime? updatedAt,
-  }) => ProviderModel(
+  }) =>
+      ProviderModel(
         id: id ?? this.id,
         providerId: providerId ?? this.providerId,
         remoteModelId: remoteModelId ?? this.remoteModelId,
@@ -96,7 +100,7 @@ class ProviderModel {
         updatedAt: updatedAt ?? this.updatedAt,
       );
 
-  String get shortName => displayName.length > 30 
-      ? '${displayName.substring(0, 27)}...' 
+  String get shortName => displayName.length > 30
+      ? '${displayName.substring(0, 27)}...'
       : displayName;
 }

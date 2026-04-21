@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite/sqflite.dart';
-import '../data/db/database_config.dart';
+import '../../data/db/database_config.dart';
 
 /// Provider for the database instance
 final databaseProvider = FutureProvider<Database>((ref) async {
@@ -9,7 +9,7 @@ final databaseProvider = FutureProvider<Database>((ref) async {
   return await openDatabase(
     path,
     version: DatabaseConfig.databaseVersion,
-    onCreate: DatabaseConfig.options.onCreate,
-    onUpgrade: DatabaseConfig.options.onUpgrade,
+    onCreate: DatabaseConfig.onCreate,
+    onUpgrade: DatabaseConfig.onUpgrade,
   );
 });

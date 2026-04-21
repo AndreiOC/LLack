@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Provider kind enum
 enum ProviderKind {
   ollama,
@@ -14,6 +16,8 @@ enum ProviderHealthStatus {
 
 /// Provider entity representing an LLM provider configuration
 class Provider {
+  static const Object _sentinel = Object();
+
   final String id;
   final ProviderKind kind;
   final String displayName;
@@ -46,31 +50,28 @@ class Provider {
 
   factory Provider.fromJson(Map<String, dynamic> json) => Provider(
         id: json['id'] as String,
-        kind: ProviderKind.values.firstWhere(
-          (e) => e.name == json['kind'],
-          orElse: () => ProviderKind.openaiCompatible,
-        ),
+        kind: _providerKindFromStorage(json['kind'] as String?),
         displayName: json['display_name'] as String,
         baseUrl: json['base_url'] as String,
         apiKeyRef: json['api_key_ref'] as String?,
         defaultModelId: json['default_model_id'] as String?,
         headers: json['headers_json'] != null
-            ? Map<String, String>.from(json['headers_json'] as Map)
+            ? Map<String, String>.from(_decodeJsonMap(json['headers_json']))
             : {},
         settings: json['settings_json'] != null
-            ? Map<String, dynamic>.from(json['settings_json'] as Map)
+            ? Map<String, dynamic>.from(_decodeJsonMap(json['settings_json']))
             : {},
         healthStatus: json['health_status'] != null
-            ? ProviderHealthStatus.values.firstWhere(
-                (e) => e.name == json['health_status'],
-                orElse: () => ProviderHealthStatus.neverChecked,
-              )
+            ? _providerHealthStatusFromStorage(json['health_status'] as String?)
             : null,
         healthCheckedAt: json['health_checked_at'] != null
-            ? DateTime.fromMillisecondsSinceEpoch(json['health_checked_at'] as int)
+            ? DateTime.fromMillisecondsSinceEpoch(
+                json['health_checked_at'] as int)
             : null,
-        createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
-        updatedAt: DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
+        createdAt:
+            DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
+        updatedAt:
+            DateTime.fromMillisecondsSinceEpoch(json['updated_at'] as int),
         deletedAt: json['deleted_at'] != null
             ? DateTime.fromMillisecondsSinceEpoch(json['deleted_at'] as int)
             : null,
@@ -78,14 +79,16 @@ class Provider {
 
   Map<String, dynamic> toJson() => {
         'id': id,
-        'kind': kind.name,
+        'kind': _providerKindToStorage(kind),
         'display_name': displayName,
         'base_url': baseUrl,
         'api_key_ref': apiKeyRef,
         'default_model_id': defaultModelId,
-        'headers_json': headers,
-        'settings_json': settings,
-        'health_status': healthStatus?.name,
+        'headers_json': headers.isEmpty ? null : _encodeJsonMap(headers),
+        'settings_json': settings.isEmpty ? null : _encodeJsonMap(settings),
+        'health_status': healthStatus != null
+            ? _providerHealthStatusToStorage(healthStatus!)
+            : null,
         'health_checked_at': healthCheckedAt?.millisecondsSinceEpoch,
         'created_at': createdAt.millisecondsSinceEpoch,
         'updated_at': updatedAt.millisecondsSinceEpoch,
@@ -106,33 +109,116 @@ class Provider {
     ProviderKind? kind,
     String? displayName,
     String? baseUrl,
-    String? apiKeyRef,
-    String? defaultModelId,
+    Object? apiKeyRef = _sentinel,
+    Object? defaultModelId = _sentinel,
     Map<String, String>? headers,
     Map<String, dynamic>? settings,
-    ProviderHealthStatus? healthStatus,
-    DateTime? healthCheckedAt,
+    Object? healthStatus = _sentinel,
+    Object? healthCheckedAt = _sentinel,
     DateTime? createdAt,
     DateTime? updatedAt,
-    DateTime? deletedAt,
-  }) => Provider(
+    Object? deletedAt = _sentinel,
+  }) =>
+      Provider(
         id: id ?? this.id,
         kind: kind ?? this.kind,
         displayName: displayName ?? this.displayName,
         baseUrl: baseUrl ?? this.baseUrl,
-        apiKeyRef: apiKeyRef ?? this.apiKeyRef,
-        defaultModelId: defaultModelId ?? this.defaultModelId,
+        apiKeyRef: identical(apiKeyRef, _sentinel)
+            ? this.apiKeyRef
+            : apiKeyRef as String?,
+        defaultModelId: identical(defaultModelId, _sentinel)
+            ? this.defaultModelId
+            : defaultModelId as String?,
         headers: headers ?? this.headers,
         settings: settings ?? this.settings,
-        healthStatus: healthStatus ?? this.healthStatus,
-        healthCheckedAt: healthCheckedAt ?? this.healthCheckedAt,
+        healthStatus: identical(healthStatus, _sentinel)
+            ? this.healthStatus
+            : healthStatus as ProviderHealthStatus?,
+        healthCheckedAt: identical(healthCheckedAt, _sentinel)
+            ? this.healthCheckedAt
+            : healthCheckedAt as DateTime?,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
-        deletedAt: deletedAt ?? this.deletedAt,
+        deletedAt: identical(deletedAt, _sentinel)
+            ? this.deletedAt
+            : deletedAt as DateTime?,
       );
 
   bool get isDeleted => deletedAt != null;
   bool get isHealthy => healthStatus == ProviderHealthStatus.healthy;
   bool get requiresApiKey => kind == ProviderKind.openaiCompatible;
   bool get isOllama => kind == ProviderKind.ollama;
+}
+
+Map<String, dynamic> _decodeJsonMap(Object value) {
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return Map<String, dynamic>.from(value);
+  }
+  if (value is String && value.isNotEmpty) {
+    final decoded = jsonDecode(value);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+  }
+  return const {};
+}
+
+String _encodeJsonMap(Map<String, dynamic> value) {
+  return jsonEncode(value);
+}
+
+ProviderKind _providerKindFromStorage(String? value) {
+  switch (value) {
+    case 'ollama':
+      return ProviderKind.ollama;
+    case 'openai_compatible':
+    case 'openaiCompatible':
+      return ProviderKind.openaiCompatible;
+    default:
+      return ProviderKind.openaiCompatible;
+  }
+}
+
+String _providerKindToStorage(ProviderKind value) {
+  switch (value) {
+    case ProviderKind.ollama:
+      return 'ollama';
+    case ProviderKind.openaiCompatible:
+      return 'openai_compatible';
+  }
+}
+
+ProviderHealthStatus _providerHealthStatusFromStorage(String? value) {
+  switch (value) {
+    case 'healthy':
+      return ProviderHealthStatus.healthy;
+    case 'degraded':
+      return ProviderHealthStatus.degraded;
+    case 'unreachable':
+      return ProviderHealthStatus.unreachable;
+    case 'never_checked':
+    case 'neverChecked':
+    default:
+      return ProviderHealthStatus.neverChecked;
+  }
+}
+
+String _providerHealthStatusToStorage(ProviderHealthStatus value) {
+  switch (value) {
+    case ProviderHealthStatus.healthy:
+      return 'healthy';
+    case ProviderHealthStatus.degraded:
+      return 'degraded';
+    case ProviderHealthStatus.unreachable:
+      return 'unreachable';
+    case ProviderHealthStatus.neverChecked:
+      return 'never_checked';
+  }
 }

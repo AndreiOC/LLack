@@ -1,9 +1,11 @@
 import '../../data/db/dao/dao.dart';
 import '../../domain/entities/entities.dart';
+import 'package:uuid/uuid.dart';
 
 /// Repository for Conversation operations
 class ConversationRepository {
   final ConversationDao _dao;
+  static const Uuid _uuid = Uuid();
 
   ConversationRepository(this._dao);
 
@@ -51,11 +53,41 @@ class ConversationRepository {
   /// Archive conversation
   Future<void> archive(String id) => _dao.archive(id);
 
+  /// Toggle archive state
+  Future<void> toggleArchive(String id) async {
+    final conversation = await _dao.getById(id);
+    if (conversation == null) {
+      return;
+    }
+
+    if (conversation.isArchived) {
+      await _dao.unarchive(id);
+      return;
+    }
+
+    await _dao.archive(id);
+  }
+
   /// Pin conversation
   Future<void> pin(String id) => _dao.pin(id);
 
   /// Unpin conversation
   Future<void> unpin(String id) => _dao.unpin(id);
+
+  /// Toggle pin state
+  Future<void> togglePin(String id) async {
+    final conversation = await _dao.getById(id);
+    if (conversation == null) {
+      return;
+    }
+
+    if (conversation.isPinned) {
+      await _dao.unpin(id);
+      return;
+    }
+
+    await _dao.pin(id);
+  }
 
   /// Update selected provider/model
   Future<void> setProviderModel(String id, String providerId, String modelId) {
@@ -69,6 +101,6 @@ class ConversationRepository {
   Future<int> getCount() => _dao.getActiveCount();
 
   String _generateId() {
-    return DateTime.now().millisecondsSinceEpoch.toString();
+    return _uuid.v4();
   }
 }

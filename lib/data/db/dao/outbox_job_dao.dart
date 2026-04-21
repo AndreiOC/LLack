@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import '../../domain/entities/entities.dart';
+import '../../../domain/entities/entities.dart';
 
 /// Data Access Object for OutboxJob operations
 class OutboxJobDao {
@@ -77,8 +77,9 @@ class OutboxJobDao {
   Future<void> markForRetry(String id, int retryCount, String lastError) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final backoffSeconds = 1 << retryCount; // Exponential backoff
-    final nextRetry = now + (backoffSeconds > 300 ? 300 : backoffSeconds) * 1000;
-    
+    final nextRetry =
+        now + (backoffSeconds > 300 ? 300 : backoffSeconds) * 1000;
+
     await _db.update(
       'outbox_jobs',
       {

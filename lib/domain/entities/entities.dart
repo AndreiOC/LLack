@@ -1,4 +1,4 @@
-/// Barrel file for domain entities
+// Barrel file for domain entities
 export 'app_setting.dart';
 export 'conversation.dart';
 export 'message.dart';

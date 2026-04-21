@@ -1,9 +1,11 @@
 import '../../data/db/dao/dao.dart';
 import '../../domain/entities/entities.dart';
+import 'package:uuid/uuid.dart';
 
 /// Repository for Message operations
 class MessageRepository {
   final MessageDao _dao;
+  static const Uuid _uuid = Uuid();
 
   MessageRepository(this._dao);
 
@@ -35,9 +37,8 @@ class MessageRepository {
     String? providerId,
     String? modelId,
   }) async {
-    final now = DateTime.now();
     final nextSeq = await _dao.getNextSequenceNo(conversationId);
-    
+
     // Create user message
     final userMessage = Message.user(
       id: _generateId(),
@@ -45,7 +46,7 @@ class MessageRepository {
       content: content,
       sequenceNo: nextSeq,
     );
-    
+
     // Create assistant placeholder
     final assistantMessage = Message.assistantPlaceholder(
       id: _generateId(),
@@ -54,10 +55,10 @@ class MessageRepository {
       providerId: providerId,
       modelId: modelId,
     );
-    
+
     // Insert both in batch
     await _dao.insertBatch([userMessage, assistantMessage]);
-    
+
     return (userMessage, assistantMessage);
   }
 
@@ -91,12 +92,16 @@ class MessageRepository {
   }
 
   /// Mark as cancelled
-  Future<void> cancel(String id) => _dao.updateStatus(id, MessageStatus.cancelled);
+  Future<void> cancel(String id) =>
+      _dao.updateStatus(id, MessageStatus.cancelled);
 
   /// Search messages
   Future<List<Message>> search(String query) => _dao.searchByContent(query);
 
+  /// Delete message
+  Future<void> delete(String id) => _dao.delete(id);
+
   String _generateId() {
-    return DateTime.now().millisecondsSinceEpoch.toString();
+    return _uuid.v4();
   }
 }

@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
-import '../../domain/entities/entities.dart';
-import '../../domain/interfaces/chat_provider_adapter.dart';
+import '../../../domain/entities/entities.dart';
+import '../../../domain/interfaces/chat_provider_adapter.dart';
 
 /// Adapter for Ollama API
 /// https://github.com/ollama/ollama/blob/main/docs/api.md
@@ -25,7 +25,9 @@ class OllamaAdapter implements ChatProviderAdapter {
 
       if (response.statusCode == 200) {
         return ProviderValidationResult.success(
-          metadata: {'models_available': (response.data['models'] as List?)?.length ?? 0},
+          metadata: {
+            'models_available': (response.data['models'] as List?)?.length ?? 0
+          },
         );
       }
       return ProviderValidationResult.failure(
@@ -102,7 +104,8 @@ class OllamaAdapter implements ChatProviderAdapter {
   }
 
   @override
-  Stream<ChatStreamEvent> streamChat(ChatRequest request, String apiKey) async* {
+  Stream<ChatStreamEvent> streamChat(
+      ChatRequest request, String apiKey) async* {
     try {
       final response = await _dio.post<ResponseBody>(
         '${request.providerId}/api/chat',
@@ -125,16 +128,15 @@ class OllamaAdapter implements ChatProviderAdapter {
         return;
       }
 
-      String accumulatedContent = '';
       Map<String, dynamic>? finalMetadata;
 
-      await for (final chunk in stream.transform(utf8.decoder)) {
+      await for (final chunk in stream.map((bytes) => utf8.decode(bytes))) {
         final lines = chunk.split('\n').where((l) => l.trim().isNotEmpty);
-        
+
         for (final line in lines) {
           try {
             final data = jsonDecode(line) as Map<String, dynamic>;
-            
+
             if (data['done'] == true) {
               finalMetadata = {
                 'total_duration': data['total_duration'],
@@ -145,12 +147,11 @@ class OllamaAdapter implements ChatProviderAdapter {
               yield ChatStreamEvent.done(metadata: finalMetadata);
               return;
             }
-            
+
             final message = data['message'] as Map<String, dynamic>?;
             final content = message?['content'] as String?;
-            
+
             if (content != null && content.isNotEmpty) {
-              accumulatedContent += content;
               yield ChatStreamEvent.delta(content);
             }
           } catch (e) {

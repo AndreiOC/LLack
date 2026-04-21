@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import '../../domain/entities/entities.dart';
+import '../../../domain/entities/entities.dart';
 
 /// Data Access Object for Conversation operations
 class ConversationDao {
@@ -76,6 +76,17 @@ class ConversationDao {
     await _db.update(
       'conversations',
       {'archived_at': now, 'updated_at': now},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Restore archived conversation
+  Future<void> unarchive(String id) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.update(
+      'conversations',
+      {'archived_at': null, 'updated_at': now},
       where: 'id = ?',
       whereArgs: [id],
     );

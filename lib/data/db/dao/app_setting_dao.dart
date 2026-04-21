@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import '../../domain/entities/entities.dart';
+import '../../../domain/entities/entities.dart';
 
 /// Data Access Object for AppSetting operations
 class AppSettingDao {
@@ -56,13 +56,14 @@ class AppSettingDao {
   /// Internal method to set any value
   Future<void> _setValue(String key, dynamic value) async {
     final now = DateTime.now().millisecondsSinceEpoch;
+    final setting = AppSetting(
+      key: key,
+      value: value,
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(now),
+    );
     await _db.insert(
       'app_settings',
-      {
-        'key': key,
-        'value_json': value,
-        'updated_at': now,
-      },
+      setting.toJson(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
