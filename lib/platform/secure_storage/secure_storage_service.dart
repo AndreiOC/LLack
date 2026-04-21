@@ -29,4 +29,30 @@ class SecureStorageService {
   Future<void> delete(String key) async {
     await _storage.delete(key: key);
   }
+
+  /// Store a provider's API key
+  Future<void> storeProviderApiKey(String providerId, String apiKey) async {
+    await write('provider_api_key_$providerId', apiKey);
+  }
+
+  /// Read a provider's API key
+  Future<String?> getProviderApiKey(String providerId) async {
+    return await read('provider_api_key_$providerId');
+  }
+
+  /// Delete a provider's API key
+  Future<void> deleteProviderApiKey(String providerId) async {
+    await delete('provider_api_key_$providerId');
+  }
+
+  /// Check whether a provider has a stored API key
+  Future<bool> hasProviderApiKey(String providerId) async {
+    final key = await getProviderApiKey(providerId);
+    return key != null && key.isNotEmpty;
+  }
+
+  /// Generate the storage key reference for a provider's API key
+  String generateProviderKeyRef(String providerId) {
+    return 'provider_api_key_$providerId';
+  }
 }
