@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -48,10 +49,17 @@ class DatabaseConfig {
 
   /// Execute a SQL migration file
   static Future<void> _executeMigration(Database db, String fileName) async {
-    // In production, this would load from assets
-    // For now, we'll embed the schema directly
-    if (fileName == '001_initial_schema.sql') {
-      await _executeInitialSchema(db);
+    try {
+      final sql = await rootBundle.loadString('assets/migrations/$fileName');
+      final statements = sql.split(';').where((s) => s.trim().isNotEmpty);
+      for (final statement in statements) {
+        await db.execute(statement);
+      }
+    } catch (_) {
+      // Fallback: embedded initial schema when assets aren't available
+      if (fileName == '001_initial_schema.sql') {
+        await _executeInitialSchema(db);
+      }
     }
   }
 
@@ -187,7 +195,7 @@ class DatabaseConfig {
     });
     await db.insert('app_settings', {
       'key': 'monthly_spend_threshold',
-      'value_json': 'null',
+      'value_json': null,
       'updated_at': now
     });
     await db.insert('app_settings', {
@@ -197,7 +205,7 @@ class DatabaseConfig {
     });
     await db.insert('app_settings', {
       'key': 'last_successful_ollama_endpoint',
-      'value_json': 'null',
+      'value_json': null,
       'updated_at': now
     });
   }

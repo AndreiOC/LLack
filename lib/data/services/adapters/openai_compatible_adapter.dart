@@ -125,7 +125,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
 
   @override
   Stream<ChatStreamEvent> streamChat(
-      ChatRequest request, String apiKey) async* {
+      ChatRequest request, String apiKey, {CancelToken? cancelToken}) async* {
     try {
       final response = await _dio.post<ResponseBody>(
         '${request.baseUrl}/chat/completions',
@@ -144,6 +144,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
           sendTimeout: const Duration(seconds: 30),
           receiveTimeout: const Duration(minutes: 5),
         ),
+        cancelToken: cancelToken,
       );
 
       final stream = response.data?.stream;
@@ -155,6 +156,12 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
       Map<String, dynamic>? finalMetadata;
 
       await for (final chunk in stream.map((bytes) => utf8.decode(bytes))) {
+        // Check cancellation between chunks
+        if (cancelToken?.isCancelled ?? false) {
+          yield ChatStreamEvent.error('Cancelled by user');
+          return;
+        }
+
         final lines = chunk.split('\n').where((l) => l.trim().isNotEmpty);
 
         for (final line in lines) {
@@ -196,6 +203,10 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
         }
       }
     } on DioException catch (e) {
+      if (e.type == DioExceptionType.cancel) {
+        yield ChatStreamEvent.error('Cancelled by user');
+        return;
+      }
       if (e.response?.statusCode == 401) {
         yield ChatStreamEvent.error('Invalid API key');
       } else {

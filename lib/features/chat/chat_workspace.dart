@@ -304,7 +304,7 @@ class _ConversationRail extends StatelessWidget {
 
                   return RefreshIndicator(
                     onRefresh: () async {
-                      // The notifier is owned by the parent screen.
+                      await ref.read(conversationListProvider.notifier).refresh();
                     },
                     child: ListView.separated(
                       physics: const AlwaysScrollableScrollPhysics(),

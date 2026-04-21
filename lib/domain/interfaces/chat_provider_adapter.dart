@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import '../../domain/entities/entities.dart';
 
 /// Result of provider validation
@@ -101,7 +102,7 @@ abstract class ChatProviderAdapter {
   Future<ProviderHealthStatus> healthCheck(Provider provider);
 
   /// Stream chat completion
-  Stream<ChatStreamEvent> streamChat(ChatRequest request, String apiKey);
+  Stream<ChatStreamEvent> streamChat(ChatRequest request, String apiKey, {CancelToken? cancelToken});
 
   /// Complete chat (non-streaming fallback)
   Future<ChatCompletionResult> completeChat(

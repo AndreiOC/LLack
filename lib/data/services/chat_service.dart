@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:dio/dio.dart';
 import '../../data/repositories/repositories.dart';
 import '../../data/services/adapters/adapters.dart';
 import '../../domain/entities/entities.dart';
@@ -10,6 +11,7 @@ class ChatService {
   final ProviderRepository _providerRepo;
   final ConversationRepository _conversationRepo;
   final MessageRepository _messageRepo;
+  final Map<String, CancelToken> _activeCancelTokens = {};
 
   ChatService({
     required ProviderRepository providerRepo,
@@ -130,67 +132,79 @@ class ChatService {
       parameters: parameters ?? provider.settings,
     );
 
+    // Create cancel token for this stream
+    final cancelToken = CancelToken();
+    _activeCancelTokens[assistantMessageId] = cancelToken;
+
     await _messageRepo.updateStatus(
         assistantMessageId, MessageStatus.streaming);
 
-    // Stream response
-    final buffer = StringBuffer();
-    Map<String, dynamic>? metadata;
-    String? error;
+    try {
+      // Stream response
+      final buffer = StringBuffer();
+      Map<String, dynamic>? metadata;
+      String? error;
 
-    await for (final event in adapter.streamChat(request, apiKey ?? '')) {
-      if (event.error != null) {
-        error = event.error;
-        break;
+      await for (final event in adapter.streamChat(request, apiKey ?? '', cancelToken: cancelToken)) {
+        if (event.error != null) {
+          error = event.error;
+          break;
+        }
+
+        if (event.contentDelta != null) {
+          buffer.write(event.contentDelta);
+          // Update streaming content periodically
+          await _messageRepo.updateStreamingContent(
+            assistantMessageId,
+            buffer.toString(),
+          );
+        }
+
+        if (event.isDone) {
+          metadata = event.metadata;
+          break;
+        }
+
+        yield event;
       }
 
-      if (event.contentDelta != null) {
-        buffer.write(event.contentDelta);
-        // Update streaming content periodically
-        await _messageRepo.updateStreamingContent(
-          assistantMessageId,
-          buffer.toString(),
+      // Finalize message
+      if (error != null) {
+        await _messageRepo.finalizeStreaming(
+          id: assistantMessageId,
+          content: buffer.toString(),
+          status: MessageStatus.failed,
+          metadata: {'error': error},
         );
+        yield ChatStreamEvent.error(error);
+      } else {
+        await _messageRepo.finalizeStreaming(
+          id: assistantMessageId,
+          content: buffer.toString(),
+          status: MessageStatus.completed,
+          metadata: metadata,
+          inputTokens:
+              metadata?['prompt_tokens'] ?? metadata?['prompt_eval_count'],
+          outputTokens: metadata?['completion_tokens'] ?? metadata?['eval_count'],
+        );
+        yield ChatStreamEvent.done(metadata: metadata);
       }
 
-      if (event.isDone) {
-        metadata = event.metadata;
-        break;
-      }
-
-      yield event;
+      // Update conversation
+      await _conversationRepo.update(conversation.copyWith(
+        updatedAt: DateTime.now(),
+      ));
+    } finally {
+      _activeCancelTokens.remove(assistantMessageId);
     }
-
-    // Finalize message
-    if (error != null) {
-      await _messageRepo.finalizeStreaming(
-        id: assistantMessageId,
-        content: buffer.toString(),
-        status: MessageStatus.failed,
-        metadata: {'error': error},
-      );
-      yield ChatStreamEvent.error(error);
-    } else {
-      await _messageRepo.finalizeStreaming(
-        id: assistantMessageId,
-        content: buffer.toString(),
-        status: MessageStatus.completed,
-        metadata: metadata,
-        inputTokens:
-            metadata?['prompt_tokens'] ?? metadata?['prompt_eval_count'],
-        outputTokens: metadata?['completion_tokens'] ?? metadata?['eval_count'],
-      );
-      yield ChatStreamEvent.done(metadata: metadata);
-    }
-
-    // Update conversation
-    await _conversationRepo.update(conversation.copyWith(
-      updatedAt: DateTime.now(),
-    ));
   }
 
   /// Cancel ongoing stream
   Future<void> cancelMessage(String messageId) async {
+    final cancelToken = _activeCancelTokens[messageId];
+    if (cancelToken != null && !cancelToken.isCancelled) {
+      cancelToken.cancel('User cancelled');
+    }
     await _messageRepo.updateStatus(messageId, MessageStatus.cancelled);
   }
 

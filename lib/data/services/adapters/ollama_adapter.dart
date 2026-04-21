@@ -105,7 +105,7 @@ class OllamaAdapter implements ChatProviderAdapter {
 
   @override
   Stream<ChatStreamEvent> streamChat(
-      ChatRequest request, String apiKey) async* {
+      ChatRequest request, String apiKey, {CancelToken? cancelToken}) async* {
     try {
       final response = await _dio.post<ResponseBody>(
         '${request.baseUrl}/api/chat',
@@ -120,6 +120,7 @@ class OllamaAdapter implements ChatProviderAdapter {
           sendTimeout: const Duration(seconds: 30),
           receiveTimeout: const Duration(minutes: 5),
         ),
+        cancelToken: cancelToken,
       );
 
       final stream = response.data?.stream;
@@ -131,6 +132,12 @@ class OllamaAdapter implements ChatProviderAdapter {
       Map<String, dynamic>? finalMetadata;
 
       await for (final chunk in stream.map((bytes) => utf8.decode(bytes))) {
+        // Check cancellation between chunks
+        if (cancelToken?.isCancelled ?? false) {
+          yield ChatStreamEvent.error('Cancelled by user');
+          return;
+        }
+
         final lines = chunk.split('\n').where((l) => l.trim().isNotEmpty);
 
         for (final line in lines) {
@@ -161,6 +168,10 @@ class OllamaAdapter implements ChatProviderAdapter {
         }
       }
     } on DioException catch (e) {
+      if (e.type == DioExceptionType.cancel) {
+        yield ChatStreamEvent.error('Cancelled by user');
+        return;
+      }
       yield ChatStreamEvent.error('Stream error: ${e.message}');
     } catch (e) {
       yield ChatStreamEvent.error('Unexpected error: $e');
