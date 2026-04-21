@@ -1,128 +1,94 @@
 # FOSS Chat Implementation Log
 
-## 2026-04-20 06:10 GMT+8 - Phase 0 Start
+## Phase 2: Chat UI + Backend Integration (WIP)
 
-**Status:** ✅ In Progress  
-**Tool:** Codex (gpt-5.4, xhigh reasoning)  
-**Agent Session:** `agent:main:subagent:d292099a-0dcf-40dd-bd95-eea02907d32d`
+### 2026-04-21: Code Review Fixes Applied
 
-### Completed:
-1. ✅ Flutter 3.29.0 confirmed installed
-2. ✅ Project created at `/root/.openclaw/workspace/foss_chat`
-3. ✅ All 159 dependencies resolved
-4. ✅ Git repository initialized
-5. ✅ Database schema (001_initial_schema.sql) - all 6 tables + indexes
-6. ✅ DatabaseConfig with sqflite/sqflite_common_ffi setup
-7. ✅ Domain entities (manual implementation):
-   - Provider with enums (ProviderKind, ProviderHealthStatus)
-   - Conversation
-   - Message with enums (MessageRole, MessageStatus)
-   - ProviderModel
-   - OutboxJob with enums (OutboxJobStatus)
-   - AppSetting with predefined keys
+**Critical fixes implemented:**
+- **RefreshIndicator no-op** — `chat_workspace.dart` now calls `ref.read(conversationListProvider.notifier).refresh()` on pull-to-refresh
+- **'null' string literal** — `database_config.dart` now uses SQL `null` instead of string `'null'` for missing JSON values
+- **SecureStorageService** — Made injectable with optional `FlutterSecureStorage` constructor parameter (no longer static singleton)
+- **Stream cancellation** — Full cancellation pipeline:
+  - `ChatProviderAdapter` interface updated with optional `CancelToken? cancelToken`
+  - `ChatService` stores active CancelTokens per message, cancels on `cancelMessage()`
+  - `OllamaAdapter` checks cancellation between chunks and handles `DioExceptionType.cancel`
+  - `OpenAiCompatibleAdapter` same cancellation support
 
-### Snag Encountered & Resolved:
-- **Issue:** Analyzer version conflicts with build_runner/custom_lint
-- **Resolution:** Switched to manual entity implementation (no freezed/codegen)
-- **Impact:** Minimal - copyWith, fromJson, toJson implemented manually
+**Files changed (7):**
+- `lib/data/db/database_config.dart`
+- `lib/data/services/chat_service.dart`
+- `lib/domain/interfaces/chat_provider_adapter.dart`
+- `lib/data/services/adapters/ollama_adapter.dart`
+- `lib/data/services/adapters/openai_compatible_adapter.dart`
+- `lib/features/chat/chat_workspace.dart`
+- `lib/platform/secure_storage/secure_storage_service.dart`
 
-### Commits:
-- `04d043f` — Phase 0: Foundation
-- `d098593` — Phase 1 WIP: DAOs + Repositories  
-- `1bb3480` — Phase 1 Complete: Riverpod + App bootstrap
-- `355220c` — Phase 2 WIP: Provider adapters
+**Commit:** `87d5bb5`
 
----
+### 2026-04-21: Code Review Fix Follow-ups
 
-## Phase 1: Core Persistence And Provider Setup ✅ COMPLETE
+**Additional fixes applied (fixes for the fixes):**
+- **SecureStorageService provider helpers** — `storeProviderApiKey`, `getProviderApiKey`, `deleteProviderApiKey`, `hasProviderApiKey`, `generateProviderKeyRef` restored after injectable refactor broke `ProviderRepository`
+- **_ConversationRail ref access** — Converted from `StatelessWidget` to `ConsumerWidget` so `RefreshIndicator` can call `ref.read(conversationListProvider.notifier).refresh()`
 
-| Component | Status |
-|-----------|--------|
-| ProviderDao | ✅ CRUD, soft delete, health tracking |
-| ConversationDao | ✅ CRUD, pin/archive/search/pagination |
-| MessageDao | ✅ CRUD, streaming updates, batch insert |
-| OutboxJobDao | ✅ Queue management, exponential backoff |
-| AppSettingDao | ✅ Settings, onboarding helpers |
-| SecureStorageService | ✅ API key management |
-| ProviderRepository | ✅ DAO + SecureStorage |
-| ConversationRepository | ✅ DAO wrapper |
-| MessageRepository | ✅ DAO wrapper + sendMessage transaction |
-| Riverpod Providers | ✅ Database, Repositories, SecureStorage |
-| App Bootstrap | ✅ main.dart with ProviderScope |
+**Commits:** `4894eff`, `0bc93ce`
 
----
+**flutter analyze:** ✅ No issues found
 
-## Phase 2: Core Chat — IN PROGRESS
+### 2026-04-21: Code Review Completed
 
-| Component | Status |
-|-----------|--------|
-| ChatProviderAdapter interface | ✅ Complete |
-| Ollama adapter | ✅ Streaming + health checks |
-| OpenAI-compatible adapter | ✅ SSE streaming, validation |
-| AdapterFactory | ✅ Provider creation |
-| HTTP streaming (Dio) | ✅ ResponseBody streams |
-| Chat Service | ⏳ In progress |
-| Chat UI (composer, messages) | ⏳ Pending |
-| Conversation list screen | ⏳ Pending |
-| Markdown rendering | ⏳ Pending |
-| Code highlighting | ⏳ Pending |
+**Review findings (see CODE_REVIEW_REPORT.md):**
+- 1 critical bug found (sequence number operator precedence — already fixed in current code)
+- 4 medium issues (naming, migration hardcoding, stream cancellation, refresh no-op)
+- 3 low issues (null literal, static singleton, default lints)
+
+**Verdict:** Infrastructure is solid (8/10), ready for UI/feature expansion.
+
+### 2026-04-21: Phase 2 — ChatService + Provider Adapters
+
+**Implemented:**
+- ChatService with conversation creation, message sending, streaming
+- ProviderAdapterFactory for runtime adapter selection
+- OllamaAdapter with SSE streaming, model fetching, health checks
+- OpenAI-compatible adapter with NDJSON fallback
+- ChatStateNotifier with streaming state management
+
+**Status:** Backend infrastructure complete. UI layer pending.
 
 ---
 
-## Project Structure
+## Phase 1: Core Persistence And Provider Setup ✅
 
-```
-lib/
-├── app/
-│   └── providers/          # ✅ Riverpod providers
-├── bootstrap/
-├── core/
-│   ├── constants/
-│   ├── errors/
-│   ├── logging/
-│   └── utils/
-├── data/
-│   ├── db/
-│   │   ├── migrations/     # ✅ 001_initial_schema.sql
-│   │   ├── dao/            # ✅ 5 DAOs complete
-│   │   └── database_config.dart ✅
-│   ├── models/
-│   ├── repositories/       # ✅ 3 repositories
-│   └── services/
-│       └── adapters/       # ✅ Ollama + OpenAI adapters
-├── domain/
-│   ├── entities/           # ✅ 6 entities
-│   └── interfaces/         # ✅ ChatProviderAdapter
-├── features/
-│   ├── onboarding/         # ⏳ Pending
-│   ├── providers/          # ⏳ Pending
-│   ├── chat/               # ⏳ In progress
-│   ├── conversations/        # ⏳ Pending
-│   ├── usage/
-│   └── settings/
-└── platform/
-    ├── background/
-    ├── notifications/
-    └── secure_storage/     # ✅ SecureStorageService
-```
+### 2026-04-20: Riverpod + App Bootstrap
+
+**Implemented:**
+- main.dart with ProviderScope
+- DatabaseConfig with migration system
+- SecureStorageService
+- Repository providers (Provider, Conversation, Message)
+- Service providers (ChatService)
+- Feature providers (Onboarding, ConversationList, ChatState)
+
+**Status:** Complete.
+
+### 2026-04-20: DAOs + SecureStorage + Repositories
+
+**Implemented:**
+- All 6 DAOs (AppSetting, Conversation, Message, OutboxJob, Provider, ProviderModel)
+- SecureStorageService for API key isolation
+- All 3 repositories with transaction support
+
+**Status:** Complete.
 
 ---
 
-## Git History
+## Phase 0: Foundation ✅
 
-```
-355220c Phase 2 WIP: Provider adapters (Ollama + OpenAI-compatible)
-1bb3480 Phase 1 Complete: Riverpod providers + App bootstrap
-d098593 Phase 1 WIP: DAO layer + SecureStorage + Repositories
-04d043f Phase 0: Foundation - Project structure, database schema, domain entities
-```
+### 2026-04-19: Project Bootstrap
 
----
+**Created:** Flutter 3.29.0 project with multi-platform support (Android, iOS, macOS, Linux, Windows)
+**Dependencies:** sqflite, dio, flutter_riverpod, flutter_secure_storage, connectivity_plus, etc.
+**Database:** SQLite schema with 6 tables + indexes
+**Entities:** All 6 domain entities with enums
 
-## Next Steps (Phase 2 completion)
-
-1. ChatService - orchestrates adapters + repositories
-2. Chat UI screens (conversation list, chat detail)
-3. Message composer with markdown support
-4. Streaming message display
-5. Provider selector UI
+**Status:** Complete.
