@@ -1,7 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/db/dao/dao.dart';
 import '../../data/repositories/repositories.dart';
+import '../../data/services/outbox_service.dart';
 import '../../platform/secure_storage/secure_storage.dart';
+import 'chat_service_provider.dart';
 import 'database_provider.dart';
 
 /// Secure storage provider
@@ -33,6 +35,18 @@ final messageDaoProvider = FutureProvider<MessageDao>((ref) async {
   return MessageDao(db);
 });
 
+/// Provider model DAO provider
+final providerModelDaoProvider = FutureProvider<ProviderModelDao>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  return ProviderModelDao(db);
+});
+
+/// Outbox job DAO provider
+final outboxJobDaoProvider = FutureProvider<OutboxJobDao>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  return OutboxJobDao(db);
+});
+
 /// Provider repository provider
 final providerRepositoryProvider =
     FutureProvider<ProviderRepository>((ref) async {
@@ -53,4 +67,18 @@ final messageRepositoryProvider =
     FutureProvider<MessageRepository>((ref) async {
   final dao = await ref.watch(messageDaoProvider.future);
   return MessageRepository(dao);
+});
+
+/// Provider model repository provider
+final providerModelRepositoryProvider =
+    FutureProvider<ProviderModelRepository>((ref) async {
+  final dao = await ref.watch(providerModelDaoProvider.future);
+  return ProviderModelRepository(dao);
+});
+
+/// Outbox service provider
+final outboxServiceProvider = FutureProvider<OutboxService>((ref) async {
+  final outboxDao = await ref.watch(outboxJobDaoProvider.future);
+  final chatService = await ref.watch(chatServiceProvider.future);
+  return OutboxService(outboxDao, chatService);
 });

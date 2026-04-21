@@ -2,14 +2,22 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import '../../../domain/entities/entities.dart';
+import '../../../domain/errors/chat_errors.dart';
 import '../../../domain/interfaces/chat_provider_adapter.dart';
+import '../../../data/repositories/provider_model_repository.dart';
 
 /// Adapter for Ollama API
 /// https://github.com/ollama/ollama/blob/main/docs/api.md
 class OllamaAdapter implements ChatProviderAdapter {
   final Dio _dio;
+  final ProviderModelRepository? _modelRepo;
 
-  OllamaAdapter({Dio? dio}) : _dio = dio ?? Dio();
+  /// Cache TTL for model list (5 minutes)
+  static const Duration _modelCacheTtl = Duration(minutes: 5);
+
+  OllamaAdapter({Dio? dio, ProviderModelRepository? modelRepo})
+      : _dio = dio ?? Dio(),
+        _modelRepo = modelRepo;
 
   @override
   Future<ProviderValidationResult> validateConfig(Provider provider) async {
@@ -44,6 +52,18 @@ class OllamaAdapter implements ChatProviderAdapter {
 
   @override
   Future<List<ProviderModel>> fetchModels(Provider provider) async {
+    // Check cache first if repository is available
+    if (_modelRepo != null) {
+      try {
+        final cached = await _modelRepo.getByProviderId(provider.id);
+        if (cached.isNotEmpty && _isCacheFresh(cached)) {
+          return cached;
+        }
+      } catch (_) {
+        // Ignore cache errors, fetch from provider
+      }
+    }
+
     try {
       final response = await _dio.get(
         '${provider.baseUrl}/api/tags',
@@ -55,11 +75,11 @@ class OllamaAdapter implements ChatProviderAdapter {
       );
 
       if (response.statusCode != 200) {
-        throw Exception('Failed to fetch models: ${response.statusCode}');
+        throw _mapDioStatusCode(response.statusCode!);
       }
 
       final models = response.data['models'] as List<dynamic>? ?? [];
-      return models.map((m) {
+      final results = models.map((m) {
         final name = m['name'] as String;
         return ProviderModel.fromProviderResponse(
           id: '${provider.id}_$name',
@@ -71,8 +91,22 @@ class OllamaAdapter implements ChatProviderAdapter {
           supportsTools: false,
         );
       }).toList();
+
+      // Persist to cache
+      if (_modelRepo != null) {
+        try {
+          await _modelRepo.cacheModels(provider.id, results);
+        } catch (_) {
+          // Non-fatal: cache failure shouldn't break fetch
+        }
+      }
+
+      return results;
+    } on DioException catch (e) {
+      throw _mapDioException(e);
     } catch (e) {
-      throw Exception('Failed to fetch models: $e');
+      if (e is ChatError) rethrow;
+      throw ProviderError('Failed to fetch models: $e', originalError: e);
     }
   }
 
@@ -134,8 +168,7 @@ class OllamaAdapter implements ChatProviderAdapter {
       await for (final chunk in stream.map((bytes) => utf8.decode(bytes))) {
         // Check cancellation between chunks
         if (cancelToken?.isCancelled ?? false) {
-          yield ChatStreamEvent.error('Cancelled by user');
-          return;
+          throw const CancellationError();
         }
 
         final lines = chunk.split('\n').where((l) => l.trim().isNotEmpty);
@@ -169,12 +202,12 @@ class OllamaAdapter implements ChatProviderAdapter {
       }
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) {
-        yield ChatStreamEvent.error('Cancelled by user');
-        return;
+        throw const CancellationError();
       }
-      yield ChatStreamEvent.error('Stream error: ${e.message}');
+      throw _mapDioException(e);
     } catch (e) {
-      yield ChatStreamEvent.error('Unexpected error: $e');
+      if (e is ChatError) rethrow;
+      throw ProviderError('Stream error: $e', originalError: e);
     }
   }
 
@@ -211,9 +244,104 @@ class OllamaAdapter implements ChatProviderAdapter {
         inputTokens: data['prompt_eval_count'] as int?,
         outputTokens: data['eval_count'] as int?,
       );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
     } catch (e) {
-      throw Exception('Completion failed: $e');
+      if (e is ChatError) rethrow;
+      throw ProviderError('Completion failed: $e', originalError: e);
     }
+  }
+
+  /// Maps DioException to typed ChatError.
+  ChatError _mapDioException(DioException e) {
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.receiveTimeout) {
+      return NetworkError(
+        'Connection timed out. Check your connection.',
+        code: 'TIMEOUT',
+        originalError: e,
+      );
+    }
+    if (e.type == DioExceptionType.connectionError) {
+      return NetworkError(
+        'Could not connect to server.',
+        code: 'CONNECTION_ERROR',
+        originalError: e,
+      );
+    }
+    if (e.response != null) {
+      final status = e.response!.statusCode;
+      if (status != null) {
+        if (status == 401 || status == 403) {
+          return AuthError(
+            'Authentication failed. Check your API key.',
+            code: 'AUTH_$status',
+            originalError: e,
+          );
+        }
+        if (status >= 400 && status < 500) {
+          return ClientError(
+            'Invalid request: ${e.response!.statusMessage}',
+            code: 'CLIENT_$status',
+            originalError: e,
+          );
+        }
+        if (status >= 500) {
+          return ProviderError(
+            'Provider server error ($status). Retry later.',
+            code: 'SERVER_$status',
+            originalError: e,
+            isRetryable: true,
+          );
+        }
+      }
+    }
+    if (e.type == DioExceptionType.cancel) {
+      return const CancellationError();
+    }
+    return NetworkError(
+      'Network error: ${e.message}',
+      code: 'NETWORK_ERROR',
+      originalError: e,
+    );
+  }
+
+  /// Maps an HTTP status code to typed ChatError (for non-Dio errors).
+  ChatError _mapDioStatusCode(int status) {
+    if (status == 401 || status == 403) {
+      return AuthError(
+        'Authentication failed. Check your API key.',
+        code: 'AUTH_$status',
+      );
+    }
+    if (status >= 400 && status < 500) {
+      return ClientError(
+        'Invalid request ($status).',
+        code: 'CLIENT_$status',
+      );
+    }
+    if (status >= 500) {
+      return ProviderError(
+        'Provider server error ($status). Retry later.',
+        code: 'SERVER_$status',
+        isRetryable: true,
+      );
+    }
+    return ProviderError(
+      'Unexpected response: $status',
+      code: 'HTTP_$status',
+    );
+  }
+
+  /// Check if cached models are still fresh (within TTL).
+  bool _isCacheFresh(List<ProviderModel> cached) {
+    if (cached.isEmpty) return false;
+    // Use the most recently updated model as proxy for cache age
+    final newest = cached
+        .map((m) => m.updatedAt ?? DateTime(1970))
+        .reduce((a, b) => a.isAfter(b) ? a : b);
+    return DateTime.now().difference(newest) < _modelCacheTtl;
   }
 
   int? _extractContextWindow(Map<String, dynamic>? details) {

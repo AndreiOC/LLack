@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart' hide Provider;
 
@@ -6,7 +7,9 @@ import '../../data/repositories/conversation_repository.dart';
 import '../../data/repositories/message_repository.dart';
 import '../../data/repositories/provider_repository.dart';
 import '../../data/services/chat_service.dart';
+import '../../data/services/outbox_service.dart';
 import '../../domain/entities/entities.dart';
+import '../../domain/errors/chat_errors.dart';
 import '../../domain/interfaces/chat_provider_adapter.dart';
 import 'chat_service_provider.dart';
 import 'conversation_list_provider.dart';
@@ -82,6 +85,7 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
   ConversationRepository? _conversationRepo;
   MessageRepository? _messageRepo;
   ProviderRepository? _providerRepo;
+  OutboxService? _outboxService;
   StreamSubscription<ChatStreamEvent>? _streamSubscription;
   String? _activeAssistantMessageId;
 
@@ -142,6 +146,17 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
         current.copyWith(
           error: 'Select a default model in Providers before sending messages.',
         ),
+      );
+      return;
+    }
+
+    // Check if offline — go straight to outbox
+    if (await _isOffline()) {
+      await _enqueueToOutbox(
+        current: current,
+        content: trimmed,
+        provider: selectedProvider,
+        modelId: modelId,
       );
       return;
     }
@@ -218,6 +233,19 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
             .where((message) => message.id != assistantMessage.id)
             .toList(),
       );
+    } on ChatError catch (e) {
+      // Retryable errors → outbox; non-retryable → show error immediately
+      if (_isRetryableError(e)) {
+        await _enqueueToOutbox(
+          current: current,
+          content: trimmed,
+          provider: selectedProvider,
+          modelId: modelId,
+          error: e,
+        );
+      } else {
+        state = AsyncError(e, StackTrace.current);
+      }
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -441,6 +469,9 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
     _providerRepo ??= useWatch
         ? await ref.watch(providerRepositoryProvider.future)
         : await ref.read(providerRepositoryProvider.future);
+    _outboxService ??= useWatch
+        ? await ref.watch(outboxServiceProvider.future)
+        : await ref.read(outboxServiceProvider.future);
   }
 
   Future<void> _cancelStreamSubscription() async {
@@ -468,5 +499,100 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
       }
     }
     return null;
+  }
+
+  /// Simple connectivity check.
+  /// Returns true if the device appears offline.
+  Future<bool> _isOffline() async {
+    // TODO: Replace with proper connectivity check (e.g. connectivity_plus)
+    // For now, attempt a quick DNS resolution as a proxy.
+    try {
+      await InternetAddress.lookup('google.com')
+          .timeout(const Duration(seconds: 2));
+      return false;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Whether a ChatError is retryable (should go to outbox).
+  bool _isRetryableError(ChatError error) {
+    if (error is NetworkError) return error.isRetryable;
+    if (error is ProviderError) return error.isRetryable;
+    if (error is CancellationError) return false;
+    return false;
+  }
+
+  /// Enqueue a failed or offline send to the outbox for later retry.
+  Future<void> _enqueueToOutbox({
+    required ChatState current,
+    required String content,
+    required Provider provider,
+    required String modelId,
+    ChatError? error,
+  }) async {
+    await _ensureDependencies();
+
+    try {
+      // Create a placeholder message so the UI shows something immediately
+      late final String conversationId;
+      if (current.conversationId.isEmpty) {
+        final conversation = await _conversationRepo!.create(
+          title: content.length <= 30 ? content : '${content.substring(0, 27)}...',
+          providerId: provider.id,
+          modelId: modelId,
+        );
+        conversationId = conversation.id;
+      } else {
+        conversationId = current.conversationId;
+      }
+
+      final (userMessage, assistantMessage) = await _messageRepo!.sendMessage(
+        conversationId: conversationId,
+        content: content,
+        providerId: provider.id,
+        modelId: modelId,
+      );
+
+      // Mark as queued for outbox retry
+      await _messageRepo.updateStatus(assistantMessage.id, MessageStatus.queued);
+
+      // Enqueue to outbox
+      await _outboxService!.enqueue(
+        conversationId: conversationId,
+        messageId: assistantMessage.id,
+        providerId: provider.id,
+        payload: {
+          'content': content,
+          'modelId': modelId,
+          'providerBaseUrl': provider.baseUrl,
+          'providerHeaders': provider.headers,
+          'conversationId': conversationId,
+          'originalError': error?.toString(),
+        },
+      );
+
+      // Update UI
+      final updatedMessages = <Message>[
+        ...current.messages,
+        userMessage,
+        assistantMessage.copyWith(status: MessageStatus.queued),
+      ];
+
+      state = AsyncData(
+        current.copyWith(
+          conversationId: conversationId,
+          messages: updatedMessages,
+          isStreaming: false,
+          error: error != null
+              ? '${error.message} — queued for retry.'
+              : 'Offline — message queued for sending.',
+          selectedProvider: provider,
+        ),
+      );
+      ref.invalidate(conversationListProvider);
+    } catch (e, stackTrace) {
+      state = AsyncError(e, stackTrace);
+    }
   }
 }

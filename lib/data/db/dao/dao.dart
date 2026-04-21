@@ -4,3 +4,4 @@ export 'conversation_dao.dart';
 export 'message_dao.dart';
 export 'outbox_job_dao.dart';
 export 'provider_dao.dart';
+export 'provider_model_dao.dart';

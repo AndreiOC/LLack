@@ -181,6 +181,17 @@ class DatabaseConfig {
     await db.execute(
         'CREATE INDEX idx_provider_models_provider_id_last_used_at ON provider_models(provider_id, last_used_at)');
 
+    // Auto-update updated_at trigger for messages (safety net — DAOs also set it explicitly)
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS trg_messages_updated_at
+      AFTER UPDATE ON messages
+      FOR EACH ROW
+      WHEN NEW.updated_at = OLD.updated_at
+      BEGIN
+        UPDATE messages SET updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = NEW.id;
+      END
+    ''');
+
     // Initial app settings
     final now = DateTime.now().millisecondsSinceEpoch;
     await db.insert('app_settings', {
