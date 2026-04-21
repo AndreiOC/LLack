@@ -227,7 +227,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
   }
 }
 
-class _ConversationRail extends StatelessWidget {
+class _ConversationRail extends ConsumerWidget {
   final AsyncValue<List<Conversation>> conversationsAsync;
   final String selectedConversationId;
   final Future<void> Function() onNewConversation;
@@ -247,7 +247,7 @@ class _ConversationRail extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     return DecoratedBox(
       decoration: const BoxDecoration(
