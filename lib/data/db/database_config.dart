@@ -7,7 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// Database configuration and initialization
 class DatabaseConfig {
   static const String databaseName = 'foss_chat.db';
-  static const int databaseVersion = 1;
+  static const int databaseVersion = 2; // Bumped for usage_snapshots table
 
   /// Initialize the database factory for desktop platforms
   static void initialize() {
@@ -171,6 +171,8 @@ class DatabaseConfig {
     await db.execute(
         'CREATE INDEX idx_conversations_deleted_at ON conversations(deleted_at)');
     await db.execute(
+        'CREATE INDEX idx_conversations_pinned_at ON conversations(pinned_at DESC)');
+    await db.execute(
         'CREATE INDEX idx_messages_conversation_id_sequence_no ON messages(conversation_id, sequence_no)');
     await db.execute(
         'CREATE INDEX idx_messages_generation_group_id ON messages(generation_group_id)');
@@ -180,6 +182,31 @@ class DatabaseConfig {
         'CREATE INDEX idx_outbox_jobs_status_next_retry_at ON outbox_jobs(status, next_retry_at)');
     await db.execute(
         'CREATE INDEX idx_provider_models_provider_id_last_used_at ON provider_models(provider_id, last_used_at)');
+
+    // Usage Snapshots Table (spec §5.1, §9.6)
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS usage_snapshots (
+        id TEXT PRIMARY KEY NOT NULL,
+        conversation_id TEXT,
+        message_id TEXT,
+        provider_id TEXT,
+        model_id TEXT,
+        period_start INTEGER NOT NULL,
+        period_end INTEGER NOT NULL,
+        period_type TEXT NOT NULL CHECK (period_type IN ('daily', 'weekly', 'monthly')),
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        estimated_cost_micros INTEGER NOT NULL DEFAULT 0,
+        is_local INTEGER NOT NULL DEFAULT 0 CHECK (is_local IN (0, 1)),
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+      )
+    ''');
+
+    // Usage snapshot indexes
+    await db.execute(
+        'CREATE INDEX idx_usage_snapshots_period ON usage_snapshots(provider_id, period_type, period_start)');
+    await db.execute(
+        'CREATE INDEX idx_usage_snapshots_conversation ON usage_snapshots(conversation_id, created_at)');
 
     // Auto-update updated_at trigger for messages (safety net — DAOs also set it explicitly)
     await db.execute('''

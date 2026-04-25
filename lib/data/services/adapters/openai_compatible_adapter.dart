@@ -229,8 +229,16 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
                 yield ChatStreamEvent.delta(content);
               }
             }
+          } on FormatException catch (e) {
+            // Malformed SSE data — report as parse error per spec §7.4
+            throw StreamParseError(
+              'Malformed response from provider',
+              code: 'STREAM_PARSE_ERROR',
+              originalError: e,
+              rawChunk: line,
+            );
           } catch (e) {
-            // Skip malformed lines
+            // Skip other malformed lines
             continue;
           }
         }

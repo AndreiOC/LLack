@@ -92,6 +92,7 @@ CREATE TABLE outbox_jobs (
 -- Indexes for performance
 CREATE INDEX idx_conversations_updated_at ON conversations(updated_at DESC);
 CREATE INDEX idx_conversations_deleted_at ON conversations(deleted_at);
+CREATE INDEX idx_conversations_pinned_at ON conversations(pinned_at DESC);
 CREATE INDEX idx_messages_conversation_id_sequence_no ON messages(conversation_id, sequence_no);
 CREATE INDEX idx_messages_generation_group_id ON messages(generation_group_id);
 CREATE INDEX idx_messages_created_at ON messages(created_at);

@@ -13,7 +13,7 @@ class OutboxJobDao {
     final maps = await _db.query(
       'outbox_jobs',
       where: 'status = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)',
-      whereArgs: [OutboxJobStatus.pending.name, now],
+      whereArgs: [OutboxJobStatus.pending.storageName, now],
       orderBy: 'created_at ASC',
     );
     return maps.map((m) => OutboxJob.fromJson(m)).toList();

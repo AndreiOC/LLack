@@ -1,11 +1,51 @@
 /// Outbox job status enum
+///
+/// Values are stored in SQLite as snake_case to match the schema CHECK constraint.
 enum OutboxJobStatus {
   pending,
   processing,
   retryWait,
   failed,
   completed,
-  cancelled,
+  cancelled;
+
+  /// Convert to snake_case string for database storage.
+  String get storageName {
+    switch (this) {
+      case OutboxJobStatus.pending:
+        return 'pending';
+      case OutboxJobStatus.processing:
+        return 'processing';
+      case OutboxJobStatus.retryWait:
+        return 'retry_wait';
+      case OutboxJobStatus.failed:
+        return 'failed';
+      case OutboxJobStatus.completed:
+        return 'completed';
+      case OutboxJobStatus.cancelled:
+        return 'cancelled';
+    }
+  }
+
+  /// Parse from snake_case string read from database.
+  static OutboxJobStatus fromStorage(String value) {
+    switch (value) {
+      case 'pending':
+        return OutboxJobStatus.pending;
+      case 'processing':
+        return OutboxJobStatus.processing;
+      case 'retry_wait':
+        return OutboxJobStatus.retryWait;
+      case 'failed':
+        return OutboxJobStatus.failed;
+      case 'completed':
+        return OutboxJobStatus.completed;
+      case 'cancelled':
+        return OutboxJobStatus.cancelled;
+      default:
+        return OutboxJobStatus.pending;
+    }
+  }
 }
 
 /// Outbox job entity for offline message queue
@@ -42,10 +82,7 @@ class OutboxJob {
         messageId: json['message_id'] as String,
         providerId: json['provider_id'] as String,
         payload: Map<String, dynamic>.from(json['payload_json'] as Map),
-        status: OutboxJobStatus.values.firstWhere(
-          (e) => e.name == json['status'],
-          orElse: () => OutboxJobStatus.pending,
-        ),
+        status: OutboxJobStatus.fromStorage(json['status'] as String),
         retryCount: json['retry_count'] as int? ?? 0,
         nextRetryAt: json['next_retry_at'] != null
             ? DateTime.fromMillisecondsSinceEpoch(json['next_retry_at'] as int)
@@ -63,7 +100,7 @@ class OutboxJob {
         'message_id': messageId,
         'provider_id': providerId,
         'payload_json': payload,
-        'status': status.name,
+        'status': status.storageName,
         'retry_count': retryCount,
         'next_retry_at': nextRetryAt?.millisecondsSinceEpoch,
         'last_error': lastError,
