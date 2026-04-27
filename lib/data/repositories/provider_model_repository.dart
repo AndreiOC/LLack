@@ -22,7 +22,8 @@ class ProviderModelRepository {
   }
 
   /// Cache models fetched from a provider, replacing existing cache
-  Future<void> cacheModels(String providerId, List<ProviderModel> models) async {
+  Future<void> cacheModels(
+      String providerId, List<ProviderModel> models) async {
     await _dao.deleteByProviderId(providerId);
     await _dao.upsertBatch(providerId, models);
   }
@@ -30,6 +31,14 @@ class ProviderModelRepository {
   /// Mark a model as recently used
   Future<void> touchLastUsed(String modelId) {
     return _dao.touchLastUsed(modelId);
+  }
+
+  /// Mark a cached model as recently used using its provider-scoped remote ID.
+  Future<void> touchLastUsedByRemoteModelId(
+    String providerId,
+    String remoteModelId,
+  ) {
+    return _dao.touchLastUsedByRemoteModelId(providerId, remoteModelId);
   }
 
   /// Clear all cached models for a provider

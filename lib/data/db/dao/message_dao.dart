@@ -125,6 +125,7 @@ class MessageDao {
     Map<String, dynamic>? metadata,
     int? inputTokens,
     int? outputTokens,
+    int? estimatedCostMicros,
   ) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _db.update(
@@ -136,6 +137,7 @@ class MessageDao {
             metadata != null ? jsonEncode(metadata) : null,
         'input_tokens': inputTokens,
         'output_tokens': outputTokens,
+        'estimated_cost_micros': estimatedCostMicros,
         'updated_at': now,
       },
       where: 'id = ?',

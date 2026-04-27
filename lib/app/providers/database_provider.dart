@@ -9,6 +9,9 @@ final databaseProvider = FutureProvider<Database>((ref) async {
   return await openDatabase(
     path,
     version: DatabaseConfig.databaseVersion,
+    onConfigure: (db) async {
+      await db.execute('PRAGMA foreign_keys = ON');
+    },
     onCreate: DatabaseConfig.onCreate,
     onUpgrade: DatabaseConfig.onUpgrade,
   );

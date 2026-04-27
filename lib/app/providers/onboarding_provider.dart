@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/db/dao/app_setting_dao.dart';
 import '../../data/repositories/provider_repository.dart';
@@ -23,7 +24,7 @@ class OnboardingState {
     required this.providerCount,
   });
 
-  bool get shouldShowOnboarding => !isComplete || providerCount == 0;
+  bool get shouldShowOnboarding => !isComplete && providerCount == 0;
 }
 
 class OnboardingNotifier extends AsyncNotifier<OnboardingState> {
@@ -58,6 +59,8 @@ class OnboardingNotifier extends AsyncNotifier<OnboardingState> {
     required bool localOnlyMode,
     String? lastOllamaEndpoint,
   }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('has_completed_onboarding', true);
     await _appSettingDao.setLocalOnlyMode(localOnlyMode);
     if (lastOllamaEndpoint != null && lastOllamaEndpoint.trim().isNotEmpty) {
       await _appSettingDao.setLastOllamaEndpoint(lastOllamaEndpoint.trim());
@@ -67,14 +70,19 @@ class OnboardingNotifier extends AsyncNotifier<OnboardingState> {
   }
 
   Future<void> reopen() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('has_completed_onboarding', false);
     await _appSettingDao.setBool(AppSettingKeys.hasCompletedOnboarding, false);
     await refresh();
   }
 
   Future<OnboardingState> _loadState() async {
     final providers = await _providerRepository.getAll();
+    final prefs = await SharedPreferences.getInstance();
+    final prefsComplete = prefs.getBool('has_completed_onboarding');
+    final isComplete = prefsComplete ?? await _appSettingDao.isOnboardingComplete();
     return OnboardingState(
-      isComplete: await _appSettingDao.isOnboardingComplete(),
+      isComplete: isComplete,
       localOnlyMode: await _appSettingDao.isLocalOnlyMode(),
       lastOllamaEndpoint: await _appSettingDao.getLastOllamaEndpoint(),
       providerCount: providers.length,

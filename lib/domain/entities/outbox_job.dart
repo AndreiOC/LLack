@@ -1,3 +1,19 @@
+import 'dart:convert';
+
+Map<String, dynamic> _decodeOutboxPayload(dynamic value) {
+  if (value is String) {
+    try {
+      return jsonDecode(value) as Map<String, dynamic>;
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  }
+  if (value is Map) {
+    return Map<String, dynamic>.from(value);
+  }
+  return <String, dynamic>{};
+}
+
 /// Outbox job status enum
 ///
 /// Values are stored in SQLite as snake_case to match the schema CHECK constraint.
@@ -27,7 +43,6 @@ enum OutboxJobStatus {
     }
   }
 
-  /// Parse from snake_case string read from database.
   static OutboxJobStatus fromStorage(String value) {
     switch (value) {
       case 'pending':
@@ -81,7 +96,7 @@ class OutboxJob {
         conversationId: json['conversation_id'] as String,
         messageId: json['message_id'] as String,
         providerId: json['provider_id'] as String,
-        payload: Map<String, dynamic>.from(json['payload_json'] as Map),
+        payload: _decodeOutboxPayload(json['payload_json']),
         status: OutboxJobStatus.fromStorage(json['status'] as String),
         retryCount: json['retry_count'] as int? ?? 0,
         nextRetryAt: json['next_retry_at'] != null
@@ -99,7 +114,7 @@ class OutboxJob {
         'conversation_id': conversationId,
         'message_id': messageId,
         'provider_id': providerId,
-        'payload_json': payload,
+        'payload_json': jsonEncode(payload),
         'status': status.storageName,
         'retry_count': retryCount,
         'next_retry_at': nextRetryAt?.millisecondsSinceEpoch,

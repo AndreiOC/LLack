@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import '../../data/repositories/repositories.dart';
 import '../../data/services/adapters/adapters.dart';
+import '../../data/services/usage_service.dart';
 import '../../domain/entities/entities.dart';
+import '../../domain/errors/chat_errors.dart';
 import '../../domain/interfaces/chat_provider_adapter.dart';
 
 /// Service for managing chat operations
@@ -11,15 +13,21 @@ class ChatService {
   final ProviderRepository _providerRepo;
   final ConversationRepository _conversationRepo;
   final MessageRepository _messageRepo;
+  final ProviderModelRepository? _providerModelRepo;
+  final UsageService? _usageService;
   final Map<String, CancelToken> _activeCancelTokens = {};
 
   ChatService({
     required ProviderRepository providerRepo,
     required ConversationRepository conversationRepo,
     required MessageRepository messageRepo,
+    ProviderModelRepository? providerModelRepo,
+    UsageService? usageService,
   })  : _providerRepo = providerRepo,
         _conversationRepo = conversationRepo,
-        _messageRepo = messageRepo;
+        _messageRepo = messageRepo,
+        _providerModelRepo = providerModelRepo,
+        _usageService = usageService;
 
   /// Create a new conversation and send first message
   Future<
@@ -122,7 +130,7 @@ class ChatService {
     }
 
     // Create adapter
-    final adapter = ChatAdapterFactory.createAdapter(provider);
+    final adapter = _createAdapter(provider);
 
     // Create request
     final request = ChatRequest(
@@ -139,13 +147,16 @@ class ChatService {
     await _messageRepo.updateStatus(
         assistantMessageId, MessageStatus.streaming);
 
+    final buffer = StringBuffer();
+    DateTime? lastDbWrite;
+
     try {
       // Stream response
-      final buffer = StringBuffer();
       Map<String, dynamic>? metadata;
       String? error;
 
-      await for (final event in adapter.streamChat(request, apiKey ?? '', cancelToken: cancelToken)) {
+      await for (final event in adapter.streamChat(request, apiKey ?? '',
+          cancelToken: cancelToken)) {
         if (event.error != null) {
           error = event.error;
           break;
@@ -153,11 +164,17 @@ class ChatService {
 
         if (event.contentDelta != null) {
           buffer.write(event.contentDelta);
-          // Update streaming content periodically
-          await _messageRepo.updateStreamingContent(
-            assistantMessageId,
-            buffer.toString(),
-          );
+          // Throttle DB writes to avoid I/O churn (spec §7.2)
+          final now = DateTime.now();
+          if (lastDbWrite == null ||
+              now.difference(lastDbWrite) >=
+                  const Duration(milliseconds: 300)) {
+            await _messageRepo.updateStreamingContent(
+              assistantMessageId,
+              buffer.toString(),
+            );
+            lastDbWrite = now;
+          }
         }
 
         if (event.isDone) {
@@ -178,14 +195,42 @@ class ChatService {
         );
         yield ChatStreamEvent.error(error);
       } else {
+        final inputTokens = _coerceInt(metadata?['prompt_tokens']) ??
+            _coerceInt(metadata?['prompt_eval_count']) ??
+            _estimateTokensFromContent(
+              messages.map((message) => message.content).join(' '),
+            );
+        final outputTokens = _coerceInt(metadata?['completion_tokens']) ??
+            _coerceInt(metadata?['eval_count']) ??
+            _estimateTokensFromContent(buffer.toString());
+        final estimatedCostMicros = _estimateCostMicros(
+          provider: provider,
+          inputTokens: inputTokens,
+          outputTokens: outputTokens,
+        );
+
         await _messageRepo.finalizeStreaming(
           id: assistantMessageId,
           content: buffer.toString(),
           status: MessageStatus.completed,
           metadata: metadata,
-          inputTokens:
-              metadata?['prompt_tokens'] ?? metadata?['prompt_eval_count'],
-          outputTokens: metadata?['completion_tokens'] ?? metadata?['eval_count'],
+          inputTokens: inputTokens,
+          outputTokens: outputTokens,
+          estimatedCostMicros: estimatedCostMicros,
+        );
+
+        await _providerModelRepo?.touchLastUsedByRemoteModelId(
+          provider.id,
+          modelId,
+        );
+        await _usageService?.recordMessageUsage(
+          conversationId: conversation.id,
+          messageId: assistantMessageId,
+          provider: provider,
+          modelId: modelId,
+          inputTokens: inputTokens,
+          outputTokens: outputTokens,
+          estimatedCostMicros: estimatedCostMicros,
         );
         yield ChatStreamEvent.done(metadata: metadata);
       }
@@ -194,6 +239,22 @@ class ChatService {
       await _conversationRepo.update(conversation.copyWith(
         updatedAt: DateTime.now(),
       ));
+    } on CancellationError {
+      // User-initiated cancellation: status is already set by cancelMessage().
+      rethrow;
+    } catch (e) {
+      // Ensure the message is marked failed when the stream throws unexpectedly
+      // so it does not remain stuck in streaming state (spec §7.2).
+      final currentMessage = await _messageRepo.getById(assistantMessageId);
+      if (currentMessage != null && !currentMessage.isFinal) {
+        await _messageRepo.finalizeStreaming(
+          id: assistantMessageId,
+          content: buffer.toString(),
+          status: MessageStatus.failed,
+          metadata: {'error': e.toString()},
+        );
+      }
+      rethrow;
     } finally {
       _activeCancelTokens.remove(assistantMessageId);
     }
@@ -230,19 +291,133 @@ class ChatService {
 
   /// Validate provider configuration
   Future<ProviderValidationResult> validateProvider(Provider provider) async {
-    final adapter = ChatAdapterFactory.createAdapter(provider);
+    final adapter = _createAdapter(provider);
     return await adapter.validateConfig(provider);
   }
 
   /// Fetch models from provider
   Future<List<ProviderModel>> fetchModels(Provider provider) async {
-    final adapter = ChatAdapterFactory.createAdapter(provider);
+    final adapter = _createAdapter(provider);
     return await adapter.fetchModels(provider);
+  }
+
+  /// Retry an outbox job by streaming into the existing assistant message.
+  Future<void> retryOutboxJob(OutboxJob job) async {
+    final conversation = await _conversationRepo.getById(job.conversationId);
+    if (conversation == null) {
+      throw Exception('Conversation not found');
+    }
+
+    final providerId = conversation.selectedProviderId;
+    final modelId = conversation.selectedModelId;
+    if (providerId == null || modelId == null) {
+      throw Exception('No provider/model selected for conversation');
+    }
+
+    final provider = await _providerRepo.getById(providerId);
+    if (provider == null) {
+      throw Exception('Provider not found');
+    }
+
+    // Get conversation history excluding the placeholder assistant message
+    final messages = await _messageRepo.getByConversationId(job.conversationId);
+    final chatMessages = messages
+        .where(
+            (m) => m.id != job.messageId && m.contentMarkdown.trim().isNotEmpty)
+        .map((m) => ChatMessage(role: m.role.name, content: m.contentMarkdown))
+        .toList();
+
+    // Ensure the user message content is represented in history
+    final content = job.payload['content'] as String?;
+    if (content != null && content.trim().isNotEmpty) {
+      if (chatMessages.isEmpty || chatMessages.last.content != content) {
+        chatMessages.add(ChatMessage(role: 'user', content: content));
+      }
+    }
+
+    // Consume the stream into the existing assistant message
+    await for (final _ in streamResponse(
+      conversationId: job.conversationId,
+      assistantMessageId: job.messageId,
+      messages: chatMessages,
+    )) {
+      // Stream is consumed; message is updated by streamResponse.
+    }
   }
 
   String _generateTitle(String content) {
     final trimmed = content.trim();
     if (trimmed.length <= 30) return trimmed;
     return '${trimmed.substring(0, 27)}...';
+  }
+
+  ChatProviderAdapter _createAdapter(Provider provider) {
+    return ChatAdapterFactory.createAdapter(
+      provider,
+      modelRepo: _providerModelRepo,
+    );
+  }
+
+  int _estimateCostMicros({
+    required Provider provider,
+    required int inputTokens,
+    required int outputTokens,
+  }) {
+    if (provider.isOllama) {
+      return 0;
+    }
+
+    final inputRate = _readPricingMicros(
+      provider.settings,
+      keys: const <String>[
+        'input_cost_per_1k_micros',
+        'inputCostPer1kMicros',
+        'prompt_cost_per_1k_micros',
+      ],
+    );
+    final outputRate = _readPricingMicros(
+      provider.settings,
+      keys: const <String>[
+        'output_cost_per_1k_micros',
+        'outputCostPer1kMicros',
+        'completion_cost_per_1k_micros',
+      ],
+    );
+
+    final inputCost = ((inputTokens / 1000) * inputRate).round();
+    final outputCost = ((outputTokens / 1000) * outputRate).round();
+    return inputCost + outputCost;
+  }
+
+  int _readPricingMicros(
+    Map<String, dynamic> settings, {
+    required List<String> keys,
+  }) {
+    for (final key in keys) {
+      final rawValue = settings[key];
+      final value = _coerceInt(rawValue);
+      if (value != null) {
+        return value;
+      }
+    }
+    return 0;
+  }
+
+  int _estimateTokensFromContent(String content) {
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) {
+      return 0;
+    }
+    return (trimmed.length / 4).ceil();
+  }
+
+  int? _coerceInt(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.round();
+    }
+    return int.tryParse('$value');
   }
 }

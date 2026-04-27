@@ -75,6 +75,7 @@ class MessageRepository {
     Map<String, dynamic>? metadata,
     int? inputTokens,
     int? outputTokens,
+    int? estimatedCostMicros,
   }) {
     return _dao.finalizeStreaming(
       id,
@@ -83,6 +84,7 @@ class MessageRepository {
       metadata,
       inputTokens,
       outputTokens,
+      estimatedCostMicros,
     );
   }
 

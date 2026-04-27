@@ -53,9 +53,10 @@ class OllamaAdapter implements ChatProviderAdapter {
   @override
   Future<List<ProviderModel>> fetchModels(Provider provider) async {
     // Check cache first if repository is available
-    if (_modelRepo != null) {
+    final modelRepo = _modelRepo;
+    if (modelRepo != null) {
       try {
-        final cached = await _modelRepo.getByProviderId(provider.id);
+        final cached = await modelRepo.getByProviderId(provider.id);
         if (cached.isNotEmpty && _isCacheFresh(cached)) {
           return cached;
         }
@@ -93,9 +94,9 @@ class OllamaAdapter implements ChatProviderAdapter {
       }).toList();
 
       // Persist to cache
-      if (_modelRepo != null) {
+      if (modelRepo != null) {
         try {
-          await _modelRepo.cacheModels(provider.id, results);
+          await modelRepo.cacheModels(provider.id, results);
         } catch (_) {
           // Non-fatal: cache failure shouldn't break fetch
         }
@@ -138,8 +139,8 @@ class OllamaAdapter implements ChatProviderAdapter {
   }
 
   @override
-  Stream<ChatStreamEvent> streamChat(
-      ChatRequest request, String apiKey, {CancelToken? cancelToken}) async* {
+  Stream<ChatStreamEvent> streamChat(ChatRequest request, String apiKey,
+      {CancelToken? cancelToken}) async* {
     try {
       final response = await _dio.post<ResponseBody>(
         '${request.baseUrl}/api/chat',
@@ -288,6 +289,13 @@ class OllamaAdapter implements ChatProviderAdapter {
             originalError: e,
           );
         }
+        if (status == 429) {
+          return RateLimitError(
+            'Rate limit exceeded. Retry later.',
+            code: 'RATE_LIMIT',
+            originalError: e,
+          );
+        }
         if (status >= 400 && status < 500) {
           return ClientError(
             'Invalid request: ${e.response!.statusMessage}',
@@ -323,6 +331,12 @@ class OllamaAdapter implements ChatProviderAdapter {
         code: 'AUTH_$status',
       );
     }
+    if (status == 429) {
+      return const RateLimitError(
+        'Rate limit exceeded. Retry later.',
+        code: 'RATE_LIMIT',
+      );
+    }
     if (status >= 400 && status < 500) {
       return ClientError(
         'Invalid request ($status).',
@@ -346,9 +360,8 @@ class OllamaAdapter implements ChatProviderAdapter {
   bool _isCacheFresh(List<ProviderModel> cached) {
     if (cached.isEmpty) return false;
     // Use the most recently updated model as proxy for cache age
-    final newest = cached
-        .map((m) => m.updatedAt ?? DateTime(1970))
-        .reduce((a, b) => a.isAfter(b) ? a : b);
+    final newest =
+        cached.map((m) => m.updatedAt).reduce((a, b) => a.isAfter(b) ? a : b);
     return DateTime.now().difference(newest) < _modelCacheTtl;
   }
 

@@ -7,3 +7,4 @@ export 'ollama_discovery_provider.dart';
 export 'onboarding_provider.dart';
 export 'provider_management_provider.dart';
 export 'repository_providers.dart';
+export 'usage_provider.dart';

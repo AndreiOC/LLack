@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/widgets.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../data/db/dao/dao.dart';
 import '../../data/services/chat_service.dart';
@@ -151,17 +152,9 @@ class OutboxService extends WidgetsBindingObserver {
     await _outboxDao.markProcessing(job.id);
 
     try {
-      // The payload contains the message content to send.
-      final content = job.payload['content'] as String?;
-      if (content == null || content.trim().isEmpty) {
-        throw Exception('Outbox job payload missing content');
-      }
-
-      // Attempt to send via chat service.
-      await _chatService.sendMessage(
-        conversationId: job.conversationId,
-        content: content,
-      );
+      // Retry the outbox job by streaming into the existing assistant message.
+      // This avoids creating duplicate user/assistant messages.
+      await _chatService.retryOutboxJob(job);
 
       // On success, mark completed.
       await _outboxDao.markCompleted(job.id);
@@ -176,11 +169,6 @@ class OutboxService extends WidgetsBindingObserver {
   }
 
   String _generateId() {
-    // Use a simple timestamp-based ID to avoid uuid dependency here.
-    return 'outbox_${DateTime.now().millisecondsSinceEpoch}_${_randomSuffix()}';
-  }
-
-  String _randomSuffix() {
-    return '${DateTime.now().microsecond}';
+    return const Uuid().v4();
   }
 }

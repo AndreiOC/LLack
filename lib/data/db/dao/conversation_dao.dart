@@ -147,7 +147,7 @@ class ConversationDao {
   /// Get count of active conversations
   Future<int> getActiveCount() async {
     final result = await _db.rawQuery(
-      'SELECT COUNT(*) as count FROM conversations WHERE deleted_at IS NULL',
+      "SELECT COUNT(*) as count FROM conversations WHERE deleted_at IS NULL AND archived_at IS NULL",
     );
     return result.first['count'] as int? ?? 0;
   }

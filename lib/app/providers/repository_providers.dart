@@ -47,6 +47,12 @@ final outboxJobDaoProvider = FutureProvider<OutboxJobDao>((ref) async {
   return OutboxJobDao(db);
 });
 
+/// Usage snapshot DAO provider
+final usageSnapshotDaoProvider = FutureProvider<UsageSnapshotDao>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  return UsageSnapshotDao(db);
+});
+
 /// Provider repository provider
 final providerRepositoryProvider =
     FutureProvider<ProviderRepository>((ref) async {

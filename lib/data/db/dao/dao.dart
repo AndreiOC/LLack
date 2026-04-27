@@ -5,3 +5,4 @@ export 'message_dao.dart';
 export 'outbox_job_dao.dart';
 export 'provider_dao.dart';
 export 'provider_model_dao.dart';
+export 'usage_snapshot_dao.dart';

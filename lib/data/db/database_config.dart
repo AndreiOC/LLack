@@ -47,11 +47,15 @@ class DatabaseConfig {
     }
   }
 
-  /// Execute a SQL migration file
+  /// Execute a SQL migration file.
+  ///
+  /// Migration files can contain triggers whose bodies include semicolons, so
+  /// naive `split(';')` parsing is not safe. We split line-by-line and keep
+  /// trigger bodies intact until `END;`.
   static Future<void> _executeMigration(Database db, String fileName) async {
     try {
       final sql = await rootBundle.loadString('assets/migrations/$fileName');
-      final statements = sql.split(';').where((s) => s.trim().isNotEmpty);
+      final statements = _splitSqlStatements(sql);
       for (final statement in statements) {
         await db.execute(statement);
       }
@@ -61,6 +65,46 @@ class DatabaseConfig {
         await _executeInitialSchema(db);
       }
     }
+  }
+
+  static List<String> _splitSqlStatements(String sql) {
+    final statements = <String>[];
+    var buffer = StringBuffer();
+    var inTrigger = false;
+
+    for (final rawLine in sql.split('\n')) {
+      final line = rawLine.trimRight();
+      final trimmed = line.trim();
+      if (trimmed.isEmpty || trimmed.startsWith('--')) {
+        continue;
+      }
+
+      if (buffer.length > 0) {
+        buffer.writeln();
+      }
+      buffer.write(line);
+
+      final upperTrimmed = trimmed.toUpperCase();
+      if (!inTrigger && upperTrimmed.startsWith('CREATE TRIGGER')) {
+        inTrigger = true;
+      }
+
+      final isEndOfStatement =
+          inTrigger ? upperTrimmed == 'END;' : trimmed.endsWith(';');
+      if (!isEndOfStatement) {
+        continue;
+      }
+
+      statements.add(buffer.toString());
+      buffer = StringBuffer();
+      inTrigger = false;
+    }
+
+    if (buffer.length > 0) {
+      statements.add(buffer.toString());
+    }
+
+    return statements;
   }
 
   /// Execute the initial schema

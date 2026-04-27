@@ -44,7 +44,8 @@ class ProviderModelDao {
   }
 
   /// Batch insert/replace models for a provider (used after fetchModels)
-  Future<void> upsertBatch(String providerId, List<ProviderModel> models) async {
+  Future<void> upsertBatch(
+      String providerId, List<ProviderModel> models) async {
     final batch = _db.batch();
     for (final model in models) {
       batch.insert(
@@ -64,6 +65,20 @@ class ProviderModelDao {
       {'last_used_at': now, 'updated_at': now},
       where: 'id = ?',
       whereArgs: [id],
+    );
+  }
+
+  /// Update last_used_at using the provider-scoped remote model ID.
+  Future<void> touchLastUsedByRemoteModelId(
+    String providerId,
+    String remoteModelId,
+  ) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.update(
+      'provider_models',
+      {'last_used_at': now, 'updated_at': now},
+      where: 'provider_id = ? AND remote_model_id = ?',
+      whereArgs: [providerId, remoteModelId],
     );
   }
 

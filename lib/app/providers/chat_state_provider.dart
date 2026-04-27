@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' hide Provider;
 
 import '../../data/repositories/conversation_repository.dart';
@@ -14,6 +14,7 @@ import '../../domain/interfaces/chat_provider_adapter.dart';
 import 'chat_service_provider.dart';
 import 'conversation_list_provider.dart';
 import 'repository_providers.dart';
+import 'usage_provider.dart';
 
 final chatStateProvider =
     AutoDisposeAsyncNotifierProvider<ChatStateNotifier, ChatState>(
@@ -150,8 +151,8 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
       return;
     }
 
-    // Check if offline — go straight to outbox
-    if (await _isOffline()) {
+    // Check if offline — queue remote providers only (spec §7.3)
+    if (await _isOffline() && !selectedProvider.isOllama) {
       await _enqueueToOutbox(
         current: current,
         content: trimmed,
@@ -234,8 +235,8 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
             .toList(),
       );
     } on ChatError catch (e) {
-      // Retryable errors → outbox; non-retryable → show error immediately
-      if (_isRetryableError(e)) {
+      // Retryable errors → outbox for remote providers only (spec §7.3)
+      if (_isRetryableError(e) && !selectedProvider.isOllama) {
         await _enqueueToOutbox(
           current: current,
           content: trimmed,
@@ -304,6 +305,7 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
 
     try {
       await _messageRepo!.delete(id);
+      ref.invalidate(usageOverviewProvider);
       await _reloadCurrentConversation();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
@@ -413,6 +415,7 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
     final nextState = await _loadChatState(current.conversationId);
     _activeAssistantMessageId = null;
     ref.invalidate(conversationListProvider);
+    ref.invalidate(usageOverviewProvider);
     state = AsyncData(
       nextState.copyWith(
         isStreaming: false,
@@ -501,18 +504,12 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
     return null;
   }
 
-  /// Simple connectivity check.
+  /// Connectivity check using connectivity_plus.
   /// Returns true if the device appears offline.
   Future<bool> _isOffline() async {
-    // TODO: Replace with proper connectivity check (e.g. connectivity_plus)
-    // For now, attempt a quick DNS resolution as a proxy.
-    try {
-      await InternetAddress.lookup('google.com')
-          .timeout(const Duration(seconds: 2));
-      return false;
-    } catch (_) {
-      return true;
-    }
+    final result = await Connectivity().checkConnectivity();
+    // connectivity_plus v6+ returns a List<ConnectivityResult>.
+    return result.length == 1 && result.first == ConnectivityResult.none;
   }
 
   /// Whether a ChatError is retryable (should go to outbox).
@@ -536,15 +533,27 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
     try {
       // Create a placeholder message so the UI shows something immediately
       late final String conversationId;
+      Conversation? conversation = current.conversation;
       if (current.conversationId.isEmpty) {
-        final conversation = await _conversationRepo!.create(
-          title: content.length <= 30 ? content : '${content.substring(0, 27)}...',
+        conversation = await _conversationRepo!.create(
+          title:
+              content.length <= 30 ? content : '${content.substring(0, 27)}...',
           providerId: provider.id,
           modelId: modelId,
         );
         conversationId = conversation.id;
       } else {
         conversationId = current.conversationId;
+        if (current.conversation != null &&
+            (current.conversation!.selectedProviderId != provider.id ||
+                current.conversation!.selectedModelId != modelId)) {
+          conversation = current.conversation!.copyWith(
+            selectedProviderId: provider.id,
+            selectedModelId: modelId,
+            updatedAt: DateTime.now(),
+          );
+          await _conversationRepo!.update(conversation);
+        }
       }
 
       final (userMessage, assistantMessage) = await _messageRepo!.sendMessage(
@@ -555,7 +564,10 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
       );
 
       // Mark as queued for outbox retry
-      await _messageRepo.updateStatus(assistantMessage.id, MessageStatus.queued);
+      await _messageRepo!.updateStatus(
+        assistantMessage.id,
+        MessageStatus.queued,
+      );
 
       // Enqueue to outbox
       await _outboxService!.enqueue(
@@ -582,6 +594,7 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
       state = AsyncData(
         current.copyWith(
           conversationId: conversationId,
+          conversation: conversation,
           messages: updatedMessages,
           isStreaming: false,
           error: error != null

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/providers/providers.dart';
+import 'data/services/outbox_service.dart';
 import 'features/chat/chat_workspace.dart';
 import 'features/onboarding/onboarding_flow.dart';
 
@@ -116,11 +117,47 @@ class ErrorScreen extends StatelessWidget {
   }
 }
 
-class AppShell extends ConsumerWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver {
+  OutboxService? _outboxService;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initializeOutbox();
+  }
+
+  Future<void> _initializeOutbox() async {
+    try {
+      final service = await ref.read(outboxServiceProvider.future);
+      _outboxService = service;
+      service.startPolling();
+    } catch (_) {
+      // Outbox is optional; don't block app launch on failure.
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _outboxService?.stopPolling();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _outboxService?.didChangeAppLifecycleState(state);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final onboardingAsync = ref.watch(onboardingProvider);
     final providersAsync = ref.watch(providerManagementProvider);
 
@@ -130,11 +167,9 @@ class AppShell extends ConsumerWidget {
           return ErrorScreen(error: providersAsync.error.toString());
         }
 
-        final providerList = providersAsync.valueOrNull;
-        final shouldShowOnboarding = onboardingState.shouldShowOnboarding ||
-            (providerList != null && providerList.isEmpty);
-
-        if (shouldShowOnboarding) {
+        // Spec FR-ONB-1: returning users must never see onboarding again
+        // unless manually reset from settings.
+        if (onboardingState.shouldShowOnboarding) {
           return const OnboardingFlow();
         }
 

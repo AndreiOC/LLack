@@ -92,11 +92,33 @@ CREATE TABLE outbox_jobs (
 -- Indexes
 CREATE INDEX idx_conversations_updated_at ON conversations(updated_at DESC);
 CREATE INDEX idx_conversations_deleted_at ON conversations(deleted_at);
+CREATE INDEX idx_conversations_pinned_at ON conversations(pinned_at DESC);
 CREATE INDEX idx_messages_conversation_id_sequence_no ON messages(conversation_id, sequence_no);
 CREATE INDEX idx_messages_generation_group_id ON messages(generation_group_id);
 CREATE INDEX idx_messages_created_at ON messages(created_at);
 CREATE INDEX idx_outbox_jobs_status_next_retry_at ON outbox_jobs(status, next_retry_at);
 CREATE INDEX idx_provider_models_provider_id_last_used_at ON provider_models(provider_id, last_used_at);
+
+-- Usage Snapshots Table (spec §5.1, §9.6)
+CREATE TABLE IF NOT EXISTS usage_snapshots (
+  id TEXT PRIMARY KEY NOT NULL,
+  conversation_id TEXT,
+  message_id TEXT,
+  provider_id TEXT,
+  model_id TEXT,
+  period_start INTEGER NOT NULL,
+  period_end INTEGER NOT NULL,
+  period_type TEXT NOT NULL CHECK (period_type IN ('daily', 'weekly', 'monthly')),
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  estimated_cost_micros INTEGER NOT NULL DEFAULT 0,
+  is_local INTEGER NOT NULL DEFAULT 0 CHECK (is_local IN (0, 1)),
+  created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+);
+
+-- Usage snapshot indexes
+CREATE INDEX idx_usage_snapshots_period ON usage_snapshots(provider_id, period_type, period_start);
+CREATE INDEX idx_usage_snapshots_conversation ON usage_snapshots(conversation_id, created_at);
 
 -- Auto-update updated_at trigger for messages (safety net — DAOs also set it explicitly)
 CREATE TRIGGER IF NOT EXISTS trg_messages_updated_at
@@ -106,3 +128,11 @@ WHEN NEW.updated_at = OLD.updated_at
 BEGIN
   UPDATE messages SET updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = NEW.id;
 END;
+
+-- Initial app settings
+INSERT INTO app_settings (key, value_json, updated_at) VALUES
+  ('has_completed_onboarding', 'false', strftime('%s', 'now') * 1000),
+  ('skip_cloud_providers', 'false', strftime('%s', 'now') * 1000),
+  ('monthly_spend_threshold', 'null', strftime('%s', 'now') * 1000),
+  ('show_code_line_numbers', 'false', strftime('%s', 'now') * 1000),
+  ('last_successful_ollama_endpoint', 'null', strftime('%s', 'now') * 1000);

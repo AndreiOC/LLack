@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' hide Provider;
 import 'package:intl/intl.dart';
 
 import '../../app/providers/providers.dart';
+import '../../data/services/usage_service.dart';
 import '../../domain/entities/entities.dart';
+import 'usage_dashboard_sheet.dart';
 
 class ChatWorkspace extends ConsumerStatefulWidget {
   const ChatWorkspace({super.key});
@@ -17,6 +19,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   String? _lastShownError;
+  bool _isSending = false;
 
   @override
   void dispose() {
@@ -60,6 +63,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
     final conversationsAsync = ref.watch(conversationListProvider);
     final chatAsync = ref.watch(chatStateProvider);
     final providersAsync = ref.watch(providerManagementProvider);
+    final usageOverviewAsync = ref.watch(usageOverviewProvider);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -125,6 +129,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                 return _ChatPanel(
                   chatState: chatState,
                   providers: providers,
+                  usageOverviewAsync: usageOverviewAsync,
                   scrollController: _scrollController,
                   composerController: _composerController,
                   showDrawerButton: !isWide,
@@ -147,6 +152,8 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                         .read(chatStateProvider.notifier)
                         .deleteMessage(messageId);
                   },
+                  onOpenUsageDashboard: _openUsageDashboard,
+                  onDismissUsageBanner: _dismissUsageBanner,
                   onRestartOnboarding: () async {
                     await ref.read(onboardingProvider.notifier).reopen();
                   },
@@ -204,13 +211,18 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
 
   Future<void> _sendMessage() async {
     final text = _composerController.text.trim();
-    if (text.isEmpty) {
+    if (text.isEmpty || _isSending) {
       return;
     }
 
+    _isSending = true;
     _composerController.clear();
-    await ref.read(chatStateProvider.notifier).sendMessage(text);
-    await ref.read(conversationListProvider.notifier).refresh();
+    try {
+      await ref.read(chatStateProvider.notifier).sendMessage(text);
+      await ref.read(conversationListProvider.notifier).refresh();
+    } finally {
+      _isSending = false;
+    }
   }
 
   void _scheduleScrollToBottom() {
@@ -224,6 +236,22 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
         curve: Curves.easeOutCubic,
       );
     });
+  }
+
+  Future<void> _openUsageDashboard() async {
+    ref.invalidate(usageOverviewProvider);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => const UsageDashboardSheet(),
+    );
+  }
+
+  Future<void> _dismissUsageBanner(UsageThresholdState state) async {
+    final usageService = await ref.read(usageServiceProvider.future);
+    await usageService.acknowledgeThresholdBanner(state: state);
+    ref.invalidate(usageOverviewProvider);
   }
 }
 
@@ -304,7 +332,9 @@ class _ConversationRail extends ConsumerWidget {
 
                   return RefreshIndicator(
                     onRefresh: () async {
-                      await ref.read(conversationListProvider.notifier).refresh();
+                      await ref
+                          .read(conversationListProvider.notifier)
+                          .refresh();
                     },
                     child: ListView.separated(
                       physics: const AlwaysScrollableScrollPhysics(),
@@ -453,6 +483,7 @@ enum _ConversationAction { pin, archive, delete }
 class _ChatPanel extends StatelessWidget {
   final ChatState chatState;
   final List<Provider> providers;
+  final AsyncValue<UsageOverview> usageOverviewAsync;
   final ScrollController scrollController;
   final TextEditingController composerController;
   final bool showDrawerButton;
@@ -461,11 +492,14 @@ class _ChatPanel extends StatelessWidget {
   final Future<void> Function() onCancelStream;
   final Future<void> Function(String messageId) onRetryMessage;
   final Future<void> Function(String messageId) onDeleteMessage;
+  final Future<void> Function() onOpenUsageDashboard;
+  final Future<void> Function(UsageThresholdState state) onDismissUsageBanner;
   final Future<void> Function() onRestartOnboarding;
 
   const _ChatPanel({
     required this.chatState,
     required this.providers,
+    required this.usageOverviewAsync,
     required this.scrollController,
     required this.composerController,
     required this.showDrawerButton,
@@ -474,6 +508,8 @@ class _ChatPanel extends StatelessWidget {
     required this.onCancelStream,
     required this.onRetryMessage,
     required this.onDeleteMessage,
+    required this.onOpenUsageDashboard,
+    required this.onDismissUsageBanner,
     required this.onRestartOnboarding,
   });
 
@@ -496,7 +532,15 @@ class _ChatPanel extends StatelessWidget {
           selectedModelId: selectedModelId,
           providers: providers,
           onProviderSelected: onProviderSelected,
+          onOpenUsageDashboard: onOpenUsageDashboard,
         ),
+        if (usageOverviewAsync.valueOrNull case final overview?
+            when overview.shouldShowThresholdBanner)
+          _UsageBanner(
+            overview: overview,
+            onOpenUsageDashboard: onOpenUsageDashboard,
+            onDismiss: () => onDismissUsageBanner(overview.thresholdState),
+          ),
         Expanded(
           child: chatState.messages.isEmpty
               ? _EmptyConversationState(selectedProvider: selectedProvider)
@@ -537,6 +581,7 @@ class _ChatHeader extends StatelessWidget {
   final String? selectedModelId;
   final List<Provider> providers;
   final Future<void> Function(Provider provider) onProviderSelected;
+  final Future<void> Function() onOpenUsageDashboard;
 
   const _ChatHeader({
     required this.showDrawerButton,
@@ -545,6 +590,7 @@ class _ChatHeader extends StatelessWidget {
     required this.selectedModelId,
     required this.providers,
     required this.onProviderSelected,
+    required this.onOpenUsageDashboard,
   });
 
   @override
@@ -593,6 +639,11 @@ class _ChatHeader extends StatelessWidget {
                     ),
                   ],
                 ),
+              ),
+              IconButton.filledTonal(
+                onPressed: onOpenUsageDashboard,
+                icon: const Icon(Icons.query_stats_rounded),
+                tooltip: 'Usage dashboard',
               ),
             ],
           ),
@@ -669,6 +720,93 @@ class _ChatHeader extends StatelessWidget {
                 ],
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UsageBanner extends StatelessWidget {
+  static final NumberFormat _currencyFormat =
+      NumberFormat.currency(symbol: '\$');
+
+  final UsageOverview overview;
+  final Future<void> Function() onOpenUsageDashboard;
+  final Future<void> Function() onDismiss;
+
+  const _UsageBanner({
+    required this.overview,
+    required this.onOpenUsageDashboard,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final (background, icon, title) = switch (overview.thresholdState) {
+      UsageThresholdState.exceeded => (
+          const Color(0xFFFBE4DF),
+          Icons.warning_amber_rounded,
+          'Monthly cloud spend exceeded the current threshold.',
+        ),
+      UsageThresholdState.approaching => (
+          const Color(0xFFF9EDD0),
+          Icons.insights_rounded,
+          'Monthly cloud spend is approaching the current threshold.',
+        ),
+      UsageThresholdState.none => (
+          const Color(0xFFEAF5EA),
+          Icons.check_circle_outline_rounded,
+          'Monthly cloud spend is within the current threshold.',
+        ),
+    };
+
+    final threshold = overview.monthlyThresholdDollars;
+    final subtitle = threshold == null
+        ? 'Set a monthly threshold from the dashboard to surface alerts.'
+        : 'Cloud spend is ${_currencyFormat.format(overview.monthlyCloud.estimatedCostDollars)} against a ${_currencyFormat.format(threshold)} budget.';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: background,
+        border: const Border(
+          bottom: BorderSide(color: Color(0xFFE6D7C8)),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(icon, color: const Color(0xFF5F4634)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF2B1D12),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Color(0xFF5F4634)),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: onOpenUsageDashboard,
+            child: const Text('View'),
+          ),
+          IconButton(
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close_rounded),
+            tooltip: 'Dismiss alert',
           ),
         ],
       ),

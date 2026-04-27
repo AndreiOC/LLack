@@ -25,7 +25,7 @@ class OutboxJobDao {
     final maps = await _db.query(
       'outbox_jobs',
       where: 'status = ? AND next_retry_at <= ?',
-      whereArgs: [OutboxJobStatus.retryWait.name, now],
+      whereArgs: [OutboxJobStatus.retryWait.storageName, now],
       orderBy: 'next_retry_at ASC',
     );
     return maps.map((m) => OutboxJob.fromJson(m)).toList();
@@ -65,7 +65,7 @@ class OutboxJobDao {
     await _db.update(
       'outbox_jobs',
       {
-        'status': OutboxJobStatus.processing.name,
+        'status': OutboxJobStatus.processing.storageName,
         'updated_at': now,
       },
       where: 'id = ?',
@@ -83,7 +83,7 @@ class OutboxJobDao {
     await _db.update(
       'outbox_jobs',
       {
-        'status': OutboxJobStatus.retryWait.name,
+        'status': OutboxJobStatus.retryWait.storageName,
         'retry_count': retryCount,
         'last_error': lastError,
         'next_retry_at': nextRetry,
@@ -100,7 +100,7 @@ class OutboxJobDao {
     await _db.update(
       'outbox_jobs',
       {
-        'status': OutboxJobStatus.completed.name,
+        'status': OutboxJobStatus.completed.storageName,
         'updated_at': now,
       },
       where: 'id = ?',
@@ -114,7 +114,7 @@ class OutboxJobDao {
     await _db.update(
       'outbox_jobs',
       {
-        'status': OutboxJobStatus.failed.name,
+        'status': OutboxJobStatus.failed.storageName,
         'last_error': error,
         'updated_at': now,
       },
@@ -129,7 +129,7 @@ class OutboxJobDao {
     await _db.update(
       'outbox_jobs',
       {
-        'status': OutboxJobStatus.cancelled.name,
+        'status': OutboxJobStatus.cancelled.storageName,
         'updated_at': now,
       },
       where: 'id = ?',
@@ -144,9 +144,9 @@ class OutboxJobDao {
       'outbox_jobs',
       where: 'status IN (?, ?, ?) AND updated_at < ?',
       whereArgs: [
-        OutboxJobStatus.completed.name,
-        OutboxJobStatus.cancelled.name,
-        OutboxJobStatus.failed.name,
+        OutboxJobStatus.completed.storageName,
+        OutboxJobStatus.cancelled.storageName,
+        OutboxJobStatus.failed.storageName,
         cutoff,
       ],
     );
@@ -165,7 +165,7 @@ class OutboxJobDao {
   Future<int> getPendingCount() async {
     final result = await _db.rawQuery(
       'SELECT COUNT(*) as count FROM outbox_jobs WHERE status IN (?, ?)',
-      [OutboxJobStatus.pending.name, OutboxJobStatus.retryWait.name],
+      [OutboxJobStatus.pending.storageName, OutboxJobStatus.retryWait.storageName],
     );
     return result.first['count'] as int? ?? 0;
   }

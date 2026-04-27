@@ -101,5 +101,5 @@ class UsageSnapshot {
   int get totalTokens => inputTokens + outputTokens;
 
   /// Estimated cost in dollars
-  double get estimatedCostDollars => estimatedCostMicros / 1_000_000;
+  double get estimatedCostDollars => estimatedCostMicros / 1000000;
 }
