@@ -7,7 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// Database configuration and initialization
 class DatabaseConfig {
   static const String databaseName = 'foss_chat.db';
-  static const int databaseVersion = 2; // Bumped for usage_snapshots table
+  static const int databaseVersion = 3; // Bumped for superseded message status
 
   /// Initialize the database factory for desktop platforms
   static void initialize() {
@@ -175,7 +175,7 @@ class DatabaseConfig {
         conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
         role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
         content_markdown TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('draft', 'queued', 'sending', 'streaming', 'completed', 'failed', 'cancelled')),
+        status TEXT NOT NULL CHECK (status IN ('draft', 'queued', 'sending', 'streaming', 'completed', 'failed', 'cancelled', 'superseded')),
         provider_id TEXT REFERENCES providers(id),
         model_id TEXT,
         sequence_no INTEGER NOT NULL,
@@ -277,7 +277,7 @@ class DatabaseConfig {
     });
     await db.insert('app_settings', {
       'key': 'monthly_spend_threshold',
-      'value_json': null,
+      'value_json': 'null',
       'updated_at': now
     });
     await db.insert('app_settings', {
@@ -287,7 +287,7 @@ class DatabaseConfig {
     });
     await db.insert('app_settings', {
       'key': 'last_successful_ollama_endpoint',
-      'value_json': null,
+      'value_json': 'null',
       'updated_at': now
     });
   }

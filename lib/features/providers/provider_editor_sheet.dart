@@ -984,7 +984,7 @@ class _ProviderEditorSheetState extends ConsumerState<ProviderEditorSheet> {
       _displayNameController.text.trim(),
       _normalizeEndpoint(_baseUrlController.text),
       _resolvedModelId,
-      apiKey == null ? null : apiKey.hashCode,
+      apiKey?.hashCode,
       _buildHeaders().entries
           .map((entry) => '${entry.key}:${entry.value}')
           .join('|'),

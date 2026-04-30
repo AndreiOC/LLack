@@ -7,7 +7,12 @@ import '../../app/providers/providers.dart';
 import '../../data/services/usage_service.dart';
 import '../../domain/entities/entities.dart';
 import '../providers/provider_management_sheet.dart';
+import 'code_block_builder.dart';
+import 'connectivity_banner.dart';
+import 'export_service.dart';
+import 'keyboard_shortcuts.dart';
 import 'usage_dashboard_sheet.dart';
+import '../settings/settings_screen.dart';
 
 class ChatWorkspace extends ConsumerStatefulWidget {
   const ChatWorkspace({super.key});
@@ -19,13 +24,32 @@ class ChatWorkspace extends ConsumerStatefulWidget {
 class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
   final TextEditingController _composerController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _composerFocusNode = FocusNode();
   String? _lastShownError;
   bool _isSending = false;
+  late final ChatKeyboardShortcuts _keyboardShortcuts;
+
+  @override
+  void initState() {
+    super.initState();
+    _keyboardShortcuts = ChatKeyboardShortcuts(
+      onNewConversation: () async {
+        await ref.read(chatStateProvider.notifier).prepareNewConversation();
+        _composerFocusNode.requestFocus();
+      },
+      onSendMessage: _sendMessage,
+      onStopGeneration: () async {
+        await ref.read(chatStateProvider.notifier).cancelStream();
+      },
+    );
+    _keyboardShortcuts.register();
+  }
 
   @override
   void dispose() {
     _composerController.dispose();
     _scrollController.dispose();
+    _composerFocusNode.dispose();
     super.dispose();
   }
 
@@ -74,6 +98,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
           selectedConversationId: chatAsync.valueOrNull?.conversationId ?? '',
           onNewConversation: () async {
             await ref.read(chatStateProvider.notifier).prepareNewConversation();
+            _composerFocusNode.requestFocus();
           },
           onOpenConversation: (conversationId) async {
             final navigator = Navigator.of(context);
@@ -84,16 +109,8 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
               navigator.maybePop();
             }
           },
-          onDeleteConversation: (conversationId) async {
-            await ref
-                .read(conversationListProvider.notifier)
-                .deleteConversation(conversationId);
-            if (chatAsync.valueOrNull?.conversationId == conversationId) {
-              await ref
-                  .read(chatStateProvider.notifier)
-                  .prepareNewConversation();
-            }
-          },
+          onDeleteConversation: (conversationId) =>
+              _deleteConversation(conversationId, conversationsAsync, chatAsync),
           onTogglePin: (conversationId) async {
             await ref
                 .read(conversationListProvider.notifier)
@@ -109,6 +126,12 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                   .prepareNewConversation();
             }
           },
+          onRename: (conversationId, newTitle) async {
+            await ref
+                .read(conversationListProvider.notifier)
+                .rename(conversationId, newTitle);
+          },
+          onExport: (conversation) => _exportConversation(conversation),
         );
 
         final body = DecoratedBox(
@@ -133,11 +156,17 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                   usageOverviewAsync: usageOverviewAsync,
                   scrollController: _scrollController,
                   composerController: _composerController,
+                  composerFocusNode: _composerFocusNode,
                   showDrawerButton: !isWide,
                   onProviderSelected: (provider) async {
                     await ref
                         .read(chatStateProvider.notifier)
                         .selectProvider(provider);
+                  },
+                  onModelSelected: (modelId) async {
+                    await ref
+                        .read(chatStateProvider.notifier)
+                        .selectModel(modelId);
                   },
                   onSendMessage: _sendMessage,
                   onCancelStream: () async {
@@ -153,7 +182,19 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                         .read(chatStateProvider.notifier)
                         .deleteMessage(messageId);
                   },
+                  onEditMessage: (messageId, newContent) async {
+                    await ref
+                        .read(chatStateProvider.notifier)
+                        .editMessage(messageId, newContent);
+                  },
                   onOpenUsageDashboard: _openUsageDashboard,
+                  onOpenSettings: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (context) => const SettingsScreen(),
+                      ),
+                    );
+                  },
                   onOpenProviderManagement: _openProviderManagement,
                   onDismissUsageBanner: _dismissUsageBanner,
                   onRestartOnboarding: () async {
@@ -205,7 +246,13 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
           drawer: Drawer(
             child: SafeArea(child: rail),
           ),
-          body: body,
+          body: CallbackShortcuts(
+            bindings: _keyboardShortcuts.shortcuts,
+            child: Focus(
+              autofocus: true,
+              child: ConnectivityBanner(child: body),
+            ),
+          ),
         );
       },
     );
@@ -222,6 +269,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
     try {
       await ref.read(chatStateProvider.notifier).sendMessage(text);
       await ref.read(conversationListProvider.notifier).refresh();
+      _composerFocusNode.requestFocus();
     } finally {
       _isSending = false;
     }
@@ -259,9 +307,76 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
     await usageService.acknowledgeThresholdBanner(state: state);
     ref.invalidate(usageOverviewProvider);
   }
+
+  Future<void> _exportConversation(Conversation conversation) async {
+    final messages = await ref
+        .read(chatServiceProvider.future)
+        .then((s) => s.getMessages(conversation.id));
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('Export as Markdown'),
+              onTap: () async {
+                Navigator.pop(context);
+                await ExportService.shareMarkdown(conversation, messages);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.code_outlined),
+              title: const Text('Export as JSON'),
+              onTap: () async {
+                Navigator.pop(context);
+                await ExportService.shareJson(conversation, messages);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteConversation(
+    String conversationId,
+    AsyncValue<List<Conversation>> conversationsAsync,
+    AsyncValue<ChatState> chatAsync,
+  ) async {
+    final conversation = conversationsAsync.valueOrNull
+        ?.firstWhere((c) => c.id == conversationId);
+    final scaffoldContext = context;
+    await ref
+        .read(conversationListProvider.notifier)
+        .deleteConversation(conversationId);
+    if (chatAsync.valueOrNull?.conversationId == conversationId) {
+      await ref.read(chatStateProvider.notifier).prepareNewConversation();
+    }
+    if (conversation != null && mounted) {
+      // ignore: use_build_context_synchronously
+      ScaffoldMessenger.of(scaffoldContext)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('"${conversation.title}" deleted'),
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () async {
+                await ref
+                    .read(conversationListProvider.notifier)
+                    .restoreConversation(conversationId);
+              },
+            ),
+          ),
+        );
+    }
+  }
 }
 
-class _ConversationRail extends ConsumerWidget {
+class _ConversationRail extends ConsumerStatefulWidget {
   final AsyncValue<List<Conversation>> conversationsAsync;
   final String selectedConversationId;
   final Future<void> Function() onNewConversation;
@@ -269,6 +384,8 @@ class _ConversationRail extends ConsumerWidget {
   final Future<void> Function(String conversationId) onDeleteConversation;
   final Future<void> Function(String conversationId) onTogglePin;
   final Future<void> Function(String conversationId) onArchive;
+  final Future<void> Function(String conversationId, String newTitle) onRename;
+  final Future<void> Function(Conversation conversation) onExport;
 
   const _ConversationRail({
     required this.conversationsAsync,
@@ -278,10 +395,30 @@ class _ConversationRail extends ConsumerWidget {
     required this.onDeleteConversation,
     required this.onTogglePin,
     required this.onArchive,
+    required this.onRename,
+    required this.onExport,
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ConversationRail> createState() => _ConversationRailState();
+}
+
+class _ConversationRailState extends ConsumerState<_ConversationRail> {
+  final TextEditingController _searchController = TextEditingController();
+  bool _isSearching = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _performSearch(String query) async {
+    await ref.read(conversationListProvider.notifier).search(query);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return DecoratedBox(
       decoration: const BoxDecoration(
@@ -316,18 +453,52 @@ class _ConversationRail extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             FilledButton.icon(
-              onPressed: onNewConversation,
+              onPressed: widget.onNewConversation,
               icon: const Icon(Icons.add_comment_outlined),
               label: const Text('New conversation'),
             ),
+            const SizedBox(height: 12),
+            // Search field
+            TextField(
+              controller: _searchController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Search conversations...',
+                hintStyle: const TextStyle(color: Color(0xFFCFBCA8)),
+                prefixIcon: const Icon(Icons.search, color: Color(0xFFCFBCA8)),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, color: Color(0xFFCFBCA8)),
+                        onPressed: () {
+                          _searchController.clear();
+                          _performSearch('');
+                          setState(() => _isSearching = false);
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: const Color(0x1AF7F1EA),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              onChanged: (value) {
+                setState(() => _isSearching = value.isNotEmpty);
+                _performSearch(value);
+              },
+            ),
             const SizedBox(height: 18),
             Expanded(
-              child: conversationsAsync.when(
+              child: widget.conversationsAsync.when(
                 data: (conversations) {
                   if (conversations.isEmpty) {
                     return Center(
                       child: Text(
-                        'No conversations yet.\nStart a new thread to begin.',
+                        _isSearching
+                            ? 'No matches found.'
+                            : 'No conversations yet.\nStart a new thread to begin.',
                         textAlign: TextAlign.center,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: const Color(0xFFCFBCA8),
@@ -338,6 +509,8 @@ class _ConversationRail extends ConsumerWidget {
 
                   return RefreshIndicator(
                     onRefresh: () async {
+                      _searchController.clear();
+                      setState(() => _isSearching = false);
                       await ref
                           .read(conversationListProvider.notifier)
                           .refresh();
@@ -349,14 +522,16 @@ class _ConversationRail extends ConsumerWidget {
                       itemBuilder: (context, index) {
                         final conversation = conversations[index];
                         final isSelected =
-                            conversation.id == selectedConversationId;
+                            conversation.id == widget.selectedConversationId;
                         return _ConversationTile(
                           conversation: conversation,
                           isSelected: isSelected,
-                          onTap: () => onOpenConversation(conversation.id),
-                          onDelete: () => onDeleteConversation(conversation.id),
-                          onTogglePin: () => onTogglePin(conversation.id),
-                          onArchive: () => onArchive(conversation.id),
+                          onTap: () => widget.onOpenConversation(conversation.id),
+                          onDelete: () => widget.onDeleteConversation(conversation.id),
+                          onTogglePin: () => widget.onTogglePin(conversation.id),
+                          onArchive: () => widget.onArchive(conversation.id),
+                          onRename: (newTitle) => widget.onRename(conversation.id, newTitle),
+                          onExport: () => widget.onExport(conversation),
                         );
                       },
                     ),
@@ -388,6 +563,8 @@ class _ConversationTile extends StatelessWidget {
   final VoidCallback onDelete;
   final VoidCallback onTogglePin;
   final VoidCallback onArchive;
+  final ValueChanged<String> onRename;
+  final VoidCallback onExport;
 
   const _ConversationTile({
     required this.conversation,
@@ -396,6 +573,8 @@ class _ConversationTile extends StatelessWidget {
     required this.onDelete,
     required this.onTogglePin,
     required this.onArchive,
+    required this.onRename,
+    required this.onExport,
   });
 
   @override
@@ -457,6 +636,14 @@ class _ConversationTile extends StatelessWidget {
                     child: Text(conversation.isPinned ? 'Unpin' : 'Pin'),
                   ),
                   const PopupMenuItem<_ConversationAction>(
+                    value: _ConversationAction.rename,
+                    child: Text('Rename'),
+                  ),
+                  const PopupMenuItem<_ConversationAction>(
+                    value: _ConversationAction.export,
+                    child: Text('Export'),
+                  ),
+                  const PopupMenuItem<_ConversationAction>(
                     value: _ConversationAction.archive,
                     child: Text('Archive'),
                   ),
@@ -469,6 +656,12 @@ class _ConversationTile extends StatelessWidget {
                   switch (action) {
                     case _ConversationAction.pin:
                       onTogglePin();
+                      break;
+                    case _ConversationAction.rename:
+                      _showRenameDialog(context);
+                      break;
+                    case _ConversationAction.export:
+                      onExport();
                       break;
                     case _ConversationAction.archive:
                       onArchive();
@@ -485,9 +678,46 @@ class _ConversationTile extends StatelessWidget {
       ),
     );
   }
+
+  void _showRenameDialog(BuildContext context) {
+    final controller = TextEditingController(text: conversation.title);
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename conversation'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Title'),
+          onSubmitted: (value) {
+            if (value.trim().isNotEmpty) {
+              onRename(value.trim());
+            }
+            Navigator.of(context).pop();
+          },
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) {
+                onRename(value);
+              }
+              Navigator.of(context).pop();
+            },
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-enum _ConversationAction { pin, archive, delete }
+enum _ConversationAction { pin, rename, export, archive, delete }
 
 class _ChatPanel extends StatelessWidget {
   final ChatState chatState;
@@ -495,13 +725,17 @@ class _ChatPanel extends StatelessWidget {
   final AsyncValue<UsageOverview> usageOverviewAsync;
   final ScrollController scrollController;
   final TextEditingController composerController;
+  final FocusNode composerFocusNode;
   final bool showDrawerButton;
   final Future<void> Function(Provider provider) onProviderSelected;
+  final Future<void> Function(String modelId) onModelSelected;
   final Future<void> Function() onSendMessage;
   final Future<void> Function() onCancelStream;
   final Future<void> Function(String messageId) onRetryMessage;
   final Future<void> Function(String messageId) onDeleteMessage;
+  final Future<void> Function(String messageId, String newContent) onEditMessage;
   final Future<void> Function() onOpenUsageDashboard;
+  final Future<void> Function() onOpenSettings;
   final Future<void> Function() onOpenProviderManagement;
   final Future<void> Function(UsageThresholdState state) onDismissUsageBanner;
   final Future<void> Function() onRestartOnboarding;
@@ -512,13 +746,17 @@ class _ChatPanel extends StatelessWidget {
     required this.usageOverviewAsync,
     required this.scrollController,
     required this.composerController,
+    required this.composerFocusNode,
     required this.showDrawerButton,
     required this.onProviderSelected,
+    required this.onModelSelected,
     required this.onSendMessage,
     required this.onCancelStream,
     required this.onRetryMessage,
     required this.onDeleteMessage,
+    required this.onEditMessage,
     required this.onOpenUsageDashboard,
+    required this.onOpenSettings,
     required this.onOpenProviderManagement,
     required this.onDismissUsageBanner,
     required this.onRestartOnboarding,
@@ -546,7 +784,9 @@ class _ChatPanel extends StatelessWidget {
           selectedModelId: selectedModelId,
           providers: providers,
           onProviderSelected: onProviderSelected,
+          onModelSelected: onModelSelected,
           onOpenUsageDashboard: onOpenUsageDashboard,
+          onOpenSettings: onOpenSettings,
           onOpenProviderManagement: onOpenProviderManagement,
         ),
         if (usageOverviewAsync.valueOrNull case final overview?
@@ -572,12 +812,16 @@ class _ChatPanel extends StatelessWidget {
                           ? () => onRetryMessage(message.id)
                           : null,
                       onDelete: () => onDeleteMessage(message.id),
+                      onEdit: message.isEditable
+                          ? (newContent) => onEditMessage(message.id, newContent)
+                          : null,
                     );
                   },
                 ),
         ),
         _Composer(
           controller: composerController,
+          focusNode: composerFocusNode,
           isStreaming: chatState.isStreaming,
           selectedProviderName: selectedProvider.displayName,
           selectedModelId: selectedModelId,
@@ -589,14 +833,16 @@ class _ChatPanel extends StatelessWidget {
   }
 }
 
-class _ChatHeader extends StatelessWidget {
+class _ChatHeader extends ConsumerWidget {
   final bool showDrawerButton;
   final String title;
   final Provider selectedProvider;
   final String? selectedModelId;
   final List<Provider> providers;
   final Future<void> Function(Provider provider) onProviderSelected;
+  final Future<void> Function(String modelId) onModelSelected;
   final Future<void> Function() onOpenUsageDashboard;
+  final Future<void> Function() onOpenSettings;
   final Future<void> Function() onOpenProviderManagement;
 
   const _ChatHeader({
@@ -606,13 +852,19 @@ class _ChatHeader extends StatelessWidget {
     required this.selectedModelId,
     required this.providers,
     required this.onProviderSelected,
+    required this.onModelSelected,
     required this.onOpenUsageDashboard,
+    required this.onOpenSettings,
     required this.onOpenProviderManagement,
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final cachedModelsAsync =
+        ref.watch(_cachedModelsProvider(selectedProvider.id));
+    final recentModels = cachedModelsAsync.valueOrNull ?? const <ProviderModel>[];
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 18, 20, 18),
       decoration: const BoxDecoration(
@@ -668,6 +920,12 @@ class _ChatHeader extends StatelessWidget {
                 icon: const Icon(Icons.query_stats_rounded),
                 tooltip: 'Usage dashboard',
               ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                onPressed: onOpenSettings,
+                icon: const Icon(Icons.settings_outlined),
+                tooltip: 'Settings',
+              ),
             ],
           ),
           const SizedBox(height: 18),
@@ -707,39 +965,89 @@ class _ChatHeader extends StatelessWidget {
                 ),
               );
 
-              final modelChip = Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+              final modelDropdown = DecoratedBox(
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFFE6D7C8)),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    const Icon(Icons.tune_rounded, size: 18),
-                    const SizedBox(width: 8),
-                    Text(selectedModelId ?? 'No default model'),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: selectedModelId,
+                      isExpanded: true,
+                      hint: const Text('Select model'),
+                      items: [
+                        ...recentModels.map(
+                          (model) => DropdownMenuItem<String>(
+                            value: model.remoteModelId,
+                            child: Text(model.displayName),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) async {
+                        if (value == null) return;
+                        await onModelSelected(value);
+                      },
+                    ),
+                  ),
                 ),
               );
 
+              final quickChips = recentModels.take(3).isNotEmpty
+                  ? Wrap(
+                      spacing: 8,
+                      children: recentModels.take(3).map((model) {
+                        final isSelected = model.remoteModelId == selectedModelId;
+                        return ActionChip(
+                          label: Text(model.displayName),
+                          backgroundColor: isSelected
+                              ? const Color(0xFFB85C38)
+                              : Colors.white,
+                          labelStyle: TextStyle(
+                            color: isSelected ? Colors.white : const Color(0xFF2B1D12),
+                          ),
+                          side: BorderSide(
+                            color: isSelected
+                                ? const Color(0xFFB85C38)
+                                : const Color(0xFFE6D7C8),
+                          ),
+                          onPressed: () => onModelSelected(model.remoteModelId),
+                        );
+                      }).toList(),
+                    )
+                  : const SizedBox.shrink();
+
               if (constraints.maxWidth < 700) {
                 return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
                     providerDropdown,
                     const SizedBox(height: 12),
-                    SizedBox(width: double.infinity, child: modelChip),
+                    SizedBox(width: double.infinity, child: modelDropdown),
+                    if (recentModels.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      quickChips,
+                    ],
                   ],
                 );
               }
 
-              return Row(
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  Expanded(child: providerDropdown),
-                  const SizedBox(width: 12),
-                  modelChip,
+                  Row(
+                    children: <Widget>[
+                      Expanded(child: providerDropdown),
+                      const SizedBox(width: 12),
+                      Expanded(child: modelDropdown),
+                    ],
+                  ),
+                  if (recentModels.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    quickChips,
+                  ],
                 ],
               );
             },
@@ -749,6 +1057,15 @@ class _ChatHeader extends StatelessWidget {
     );
   }
 }
+
+/// Riverpod provider for cached models of a specific provider.
+final _cachedModelsProvider =
+    FutureProvider.family<List<ProviderModel>, String>(
+  (ref, providerId) async {
+    final repo = await ref.watch(providerModelRepositoryProvider.future);
+    return repo.getByProviderId(providerId);
+  },
+);
 
 class _UsageBanner extends StatelessWidget {
   static final NumberFormat _currencyFormat =
@@ -841,11 +1158,13 @@ class _MessageBubble extends StatelessWidget {
   final Message message;
   final VoidCallback? onRetry;
   final VoidCallback onDelete;
+  final ValueChanged<String>? onEdit;
 
   const _MessageBubble({
     required this.message,
     required this.onDelete,
     this.onRetry,
+    this.onEdit,
   });
 
   @override
@@ -887,12 +1206,29 @@ class _MessageBubble extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Text(
-                    isUser ? 'You' : 'Assistant',
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: foregroundColor.withValues(alpha: 0.78),
-                      fontWeight: FontWeight.w700,
-                    ),
+                  Row(
+                    children: <Widget>[
+                      Text(
+                        isUser ? 'You' : 'Assistant',
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: foregroundColor.withValues(alpha: 0.78),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (onEdit != null) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () => _showEditDialog(context),
+                          icon: Icon(
+                            Icons.edit_outlined,
+                            size: 16,
+                            color: foregroundColor.withValues(alpha: 0.7),
+                          ),
+                          visualDensity: VisualDensity.compact,
+                          tooltip: 'Edit message',
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 10),
                   MarkdownBody(
@@ -910,6 +1246,9 @@ class _MessageBubble extends StatelessWidget {
                         color: foregroundColor.withValues(alpha: 0.88),
                       ),
                     ),
+                    builders: {
+                      'code': CodeBlockBuilder(),
+                    },
                   ),
                 ],
               ),
@@ -952,6 +1291,39 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
+  void _showEditDialog(BuildContext context) {
+    final controller = TextEditingController(text: message.contentMarkdown);
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit message'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 3,
+          maxLines: 10,
+          decoration: const InputDecoration(hintText: 'New content'),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final value = controller.text.trim();
+              if (value.isNotEmpty) {
+                onEdit!(value);
+              }
+              Navigator.of(context).pop();
+            },
+            child: const Text('Regenerate'),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _messageStatusLabel(Message message) {
     final time = DateFormat('HH:mm').format(message.updatedAt);
     final status = switch (message.status) {
@@ -962,13 +1334,15 @@ class _MessageBubble extends StatelessWidget {
       MessageStatus.queued => 'Queued',
       MessageStatus.sending => 'Sending',
       MessageStatus.draft => 'Draft',
+      MessageStatus.superseded => 'Superseded',
     };
     return '$status · $time';
   }
 }
 
-class _Composer extends StatelessWidget {
+class _Composer extends StatefulWidget {
   final TextEditingController controller;
+  final FocusNode focusNode;
   final bool isStreaming;
   final String selectedProviderName;
   final String? selectedModelId;
@@ -977,12 +1351,39 @@ class _Composer extends StatelessWidget {
 
   const _Composer({
     required this.controller,
+    required this.focusNode,
     required this.isStreaming,
     required this.selectedProviderName,
     required this.selectedModelId,
     required this.onSend,
     required this.onCancel,
   });
+
+  @override
+  State<_Composer> createState() => _ComposerState();
+}
+
+class _ComposerState extends State<_Composer> {
+  bool _canSend = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_updateCanSend);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_updateCanSend);
+    super.dispose();
+  }
+
+  void _updateCanSend() {
+    final canSend = widget.controller.text.trim().isNotEmpty;
+    if (canSend != _canSend && mounted) {
+      setState(() => _canSend = canSend);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -999,13 +1400,13 @@ class _Composer extends StatelessWidget {
           Row(
             children: <Widget>[
               Text(
-                '$selectedProviderName${selectedModelId != null ? ' · $selectedModelId' : ''}',
+                '${widget.selectedProviderName}${widget.selectedModelId != null ? ' · ${widget.selectedModelId}' : ''}',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: const Color(0xFF7C6A59),
                 ),
               ),
               const Spacer(),
-              if (isStreaming)
+              if (widget.isStreaming)
                 Text(
                   'Streaming response...',
                   style: theme.textTheme.bodySmall?.copyWith(
@@ -1020,10 +1421,16 @@ class _Composer extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: TextField(
-                  controller: controller,
+                  controller: widget.controller,
+                  focusNode: widget.focusNode,
                   minLines: 1,
                   maxLines: 6,
                   textCapitalization: TextCapitalization.sentences,
+                  onSubmitted: (_) {
+                    if (_canSend && !widget.isStreaming) {
+                      widget.onSend();
+                    }
+                  },
                   decoration: InputDecoration(
                     hintText: 'Write a prompt...',
                     filled: true,
@@ -1049,14 +1456,17 @@ class _Composer extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               FilledButton(
-                onPressed: isStreaming ? onCancel : onSend,
+                onPressed: widget.isStreaming
+                    ? widget.onCancel
+                    : (_canSend ? widget.onSend : null),
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(120, 54),
-                  backgroundColor: isStreaming
+                  backgroundColor: widget.isStreaming
                       ? const Color(0xFF8C3D3D)
                       : const Color(0xFFB85C38),
+                  disabledBackgroundColor: const Color(0xFFD9C8B8),
                 ),
-                child: Text(isStreaming ? 'Stop' : 'Send'),
+                child: Text(widget.isStreaming ? 'Stop' : 'Send'),
               ),
             ],
           ),

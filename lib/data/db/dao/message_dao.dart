@@ -9,26 +9,36 @@ class MessageDao {
 
   MessageDao(this._db);
 
-  /// Get messages for a conversation ordered by sequence
-  Future<List<Message>> getByConversationId(String conversationId) async {
+  /// Get messages for a conversation ordered by sequence.
+  /// Excludes superseded messages by default (spec FR-CHT-7).
+  Future<List<Message>> getByConversationId(String conversationId,
+      {bool includeSuperseded = false}) async {
+    final where = includeSuperseded
+        ? 'conversation_id = ?'
+        : "conversation_id = ? AND status != 'superseded'";
     final maps = await _db.query(
       'messages',
-      where: 'conversation_id = ?',
+      where: where,
       whereArgs: [conversationId],
       orderBy: 'sequence_no ASC',
     );
     return maps.map((m) => Message.fromJson(m)).toList();
   }
 
-  /// Get messages for a conversation with pagination
+  /// Get messages for a conversation with pagination.
+  /// Excludes superseded messages by default (spec FR-CHT-7).
   Future<List<Message>> getByConversationIdPaginated(
     String conversationId, {
     int limit = 50,
     int offset = 0,
+    bool includeSuperseded = false,
   }) async {
+    final where = includeSuperseded
+        ? 'conversation_id = ?'
+        : "conversation_id = ? AND status != 'superseded'";
     final maps = await _db.query(
       'messages',
-      where: 'conversation_id = ?',
+      where: where,
       whereArgs: [conversationId],
       orderBy: 'sequence_no ASC',
       limit: limit,
@@ -193,5 +203,26 @@ class MessageDao {
       orderBy: 'sequence_no ASC',
     );
     return maps.map((m) => Message.fromJson(m)).toList();
+  }
+
+  /// Mark a message and all subsequent messages in the same generation group
+  /// as superseded (spec FR-CHT-7).
+  Future<void> supersedeFromMessage(String messageId, String conversationId,
+      int sequenceNo) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.update(
+      'messages',
+      {
+        'status': MessageStatus.superseded.name,
+        'updated_at': now,
+      },
+      where:
+          'conversation_id = ? AND sequence_no >= ? AND status != ?',
+      whereArgs: [
+        conversationId,
+        sequenceNo,
+        MessageStatus.superseded.name,
+      ],
+    );
   }
 }

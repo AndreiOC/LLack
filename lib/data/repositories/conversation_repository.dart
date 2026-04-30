@@ -50,6 +50,12 @@ class ConversationRepository {
   /// Soft delete
   Future<void> delete(String id) => _dao.softDelete(id);
 
+  /// Restore soft-deleted conversation
+  Future<void> restore(String id) => _dao.restore(id);
+
+  /// Purge old deleted conversations (spec FR-CNV-3)
+  Future<int> purgeOldDeleted(Duration threshold) => _dao.purgeOldDeleted(threshold);
+
   /// Archive conversation
   Future<void> archive(String id) => _dao.archive(id);
 

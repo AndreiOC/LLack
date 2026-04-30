@@ -6,16 +6,19 @@
 // tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:foss_chat/main.dart';
 
 void main() {
-  testWidgets('App launches', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const FossChatApp());
+  testWidgets('App launches wrapped in ProviderScope', (WidgetTester tester) async {
+    // Build our app wrapped in ProviderScope and trigger a frame.
+    await tester.pumpWidget(
+      const ProviderScope(child: FossChatApp()),
+    );
 
-    // Just verify the app builds without errors
+    // Verify the app builds without errors — MaterialApp should be present
     expect(find.byType(MaterialApp), findsOneWidget);
   });
 }

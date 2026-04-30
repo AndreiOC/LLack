@@ -308,6 +308,25 @@ class ChatService {
     return adapter.healthCheck(provider);
   }
 
+  /// Edit a user message and regenerate the assistant response (spec FR-CHT-7).
+  Future<(Message editedUserMessage, Message assistantMessage)> editMessage({
+    required String conversationId,
+    required String originalMessageId,
+    required int originalSequenceNo,
+    required String newContent,
+    String? providerId,
+    String? modelId,
+  }) async {
+    return _messageRepo.editMessage(
+      conversationId: conversationId,
+      originalMessageId: originalMessageId,
+      originalSequenceNo: originalSequenceNo,
+      newContent: newContent,
+      providerId: providerId,
+      modelId: modelId,
+    );
+  }
+
   /// Retry an outbox job by streaming into the existing assistant message.
   Future<void> retryOutboxJob(OutboxJob job) async {
     final conversation = await _conversationRepo.getById(job.conversationId);

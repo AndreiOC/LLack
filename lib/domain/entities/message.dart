@@ -183,7 +183,9 @@ class Message {
   bool get isFinal =>
       status == MessageStatus.completed ||
       status == MessageStatus.failed ||
-      status == MessageStatus.cancelled;
+      status == MessageStatus.cancelled ||
+      status == MessageStatus.superseded;
+  bool get isSuperseded => status == MessageStatus.superseded;
   bool get hasTokens => inputTokens != null || outputTokens != null;
 }
 
@@ -222,4 +224,5 @@ enum MessageStatus {
   completed,
   failed,
   cancelled,
+  superseded,
 }

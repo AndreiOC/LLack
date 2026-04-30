@@ -70,6 +70,28 @@ class ConversationDao {
     );
   }
 
+  /// Restore a soft-deleted conversation
+  Future<void> restore(String id) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.update(
+      'conversations',
+      {'deleted_at': null, 'updated_at': now},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Purge conversations that have been soft-deleted for longer than the retention threshold.
+  Future<int> purgeOldDeleted(Duration threshold) async {
+    final cutoff = DateTime.now().subtract(threshold).millisecondsSinceEpoch;
+    final result = await _db.delete(
+      'conversations',
+      where: 'deleted_at IS NOT NULL AND deleted_at < ?',
+      whereArgs: [cutoff],
+    );
+    return result;
+  }
+
   /// Archive conversation
   Future<void> archive(String id) async {
     final now = DateTime.now().millisecondsSinceEpoch;

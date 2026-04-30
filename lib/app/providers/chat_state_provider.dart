@@ -295,6 +295,97 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
     await sendMessage(content);
   }
 
+  /// Edit a user message and regenerate from that point (spec FR-CHT-7).
+  Future<void> editMessage(String messageId, String newContent) async {
+    final trimmed = newContent.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+
+    final current = await future;
+    if (current.isStreaming) {
+      state = AsyncData(
+        current.copyWith(error: 'Wait for the current response to finish.'),
+      );
+      return;
+    }
+
+    final index = current.messages.indexWhere((m) => m.id == messageId);
+    if (index == -1) {
+      return;
+    }
+
+    final originalMessage = current.messages[index];
+    if (!originalMessage.isUser) {
+      state = AsyncData(
+        current.copyWith(error: 'Only user messages can be edited.'),
+      );
+      return;
+    }
+
+    await _ensureDependencies();
+
+    final selectedProvider = current.selectedProvider;
+    final modelId = current.conversation?.selectedModelId ??
+        selectedProvider?.defaultModelId;
+    if (selectedProvider == null || modelId == null || modelId.isEmpty) {
+      state = AsyncData(
+        current.copyWith(error: 'No provider or model selected.'),
+      );
+      return;
+    }
+
+    try {
+      final (editedMessage, assistantMessage) =
+          await _chatService!.editMessage(
+        conversationId: current.conversationId,
+        originalMessageId: originalMessage.id,
+        originalSequenceNo: originalMessage.sequenceNo,
+        newContent: trimmed,
+        providerId: selectedProvider.id,
+        modelId: modelId,
+      );
+
+      // Update conversation updated_at
+      if (current.conversation != null) {
+        await _conversationRepo!.update(
+          current.conversation!.copyWith(updatedAt: DateTime.now()),
+        );
+      }
+
+      final activeMessages = current.messages
+          .where((m) => !m.isSuperseded && m.id != originalMessage.id)
+          .toList();
+
+      final nextMessages = <Message>[
+        ...activeMessages,
+        editedMessage,
+        assistantMessage.copyWith(status: MessageStatus.streaming),
+      ];
+
+      _activeAssistantMessageId = assistantMessage.id;
+      state = AsyncData(
+        current.copyWith(
+          messages: nextMessages,
+          isStreaming: true,
+          streamingContent: '',
+          error: null,
+        ),
+      );
+      ref.invalidate(conversationListProvider);
+
+      await _startStreaming(
+        conversationId: current.conversationId,
+        assistantMessageId: assistantMessage.id,
+        messages: nextMessages
+            .where((message) => message.id != assistantMessage.id)
+            .toList(),
+      );
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+    }
+  }
+
   Future<void> deleteMessage(String id) async {
     await _ensureDependencies();
 
@@ -337,6 +428,27 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
       current.copyWith(
         conversation: updatedConversation,
         selectedProvider: provider,
+        error: null,
+      ),
+    );
+  }
+
+  Future<void> selectModel(String modelId) async {
+    final current = await future;
+    if (current.conversation == null) {
+      state = AsyncData(current.copyWith(error: null));
+      return;
+    }
+
+    final updatedConversation = current.conversation!.copyWith(
+      selectedModelId: modelId,
+      updatedAt: DateTime.now(),
+    );
+    await _conversationRepo!.update(updatedConversation);
+
+    state = AsyncData(
+      current.copyWith(
+        conversation: updatedConversation,
         error: null,
       ),
     );

@@ -103,6 +103,53 @@ class MessageRepository {
   /// Delete message
   Future<void> delete(String id) => _dao.delete(id);
 
+  /// Edit a user message and create a new assistant placeholder for the branch.
+  /// Supersedes the original message and all subsequent messages (spec FR-CHT-7).
+  Future<(Message editedUserMessage, Message assistantMessage)> editMessage({
+    required String conversationId,
+    required String originalMessageId,
+    required int originalSequenceNo,
+    required String newContent,
+    String? providerId,
+    String? modelId,
+  }) async {
+    // Supersede original and all subsequent messages
+    await _dao.supersedeFromMessage(
+      originalMessageId,
+      conversationId,
+      originalSequenceNo,
+    );
+
+    final nextSeq = await _dao.getNextSequenceNo(conversationId);
+    final groupId = _generateId();
+
+    // Create edited user message
+    final editedMessage = Message.user(
+      id: _generateId(),
+      conversationId: conversationId,
+      content: newContent,
+      sequenceNo: nextSeq,
+    ).copyWith(
+      editedFromMessageId: originalMessageId,
+      generationGroupId: groupId,
+    );
+
+    // Create assistant placeholder
+    final assistantMessage = Message.assistantPlaceholder(
+      id: _generateId(),
+      conversationId: conversationId,
+      sequenceNo: nextSeq + 1,
+      providerId: providerId,
+      modelId: modelId,
+    ).copyWith(
+      generationGroupId: groupId,
+    );
+
+    await _dao.insertBatch([editedMessage, assistantMessage]);
+
+    return (editedMessage, assistantMessage);
+  }
+
   String _generateId() {
     return _uuid.v4();
   }

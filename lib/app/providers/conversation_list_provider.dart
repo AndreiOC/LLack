@@ -42,6 +42,15 @@ class ConversationListNotifier
     }
   }
 
+  Future<void> restoreConversation(String id) async {
+    try {
+      await _conversationRepo.restore(id);
+      await refresh();
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+    }
+  }
+
   Future<void> togglePin(String id) async {
     final previous = state.valueOrNull ?? const <Conversation>[];
 
@@ -66,5 +75,24 @@ class ConversationListNotifier
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
+  }
+
+  Future<void> rename(String id, String newTitle) async {
+    try {
+      await _conversationRepo.updateTitle(id, newTitle);
+      await refresh();
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+    }
+  }
+
+  Future<void> search(String query) async {
+    if (query.trim().isEmpty) {
+      await refresh();
+      return;
+    }
+    state = await AsyncValue.guard(
+      () => _conversationRepo.search(query.trim()),
+    );
   }
 }

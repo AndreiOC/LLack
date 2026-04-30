@@ -52,6 +52,7 @@ dependencies:
   # Chat Rendering
   flutter_markdown: ^0.7.6
   flutter_highlight: ^0.7.0
+  markdown: ^7.3.0
   
   # Network Discovery
   bonsoir: ^5.1.11
