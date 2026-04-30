@@ -37,29 +37,29 @@ class MessageRepository {
     String? providerId,
     String? modelId,
   }) async {
-    final nextSeq = await _dao.getNextSequenceNo(conversationId);
+    return _dao.transaction((txnDao) async {
+      final nextSeq = await txnDao.getNextSequenceNo(conversationId);
 
-    // Create user message
-    final userMessage = Message.user(
-      id: _generateId(),
-      conversationId: conversationId,
-      content: content,
-      sequenceNo: nextSeq,
-    );
+      // Create user message
+      final userMessage = Message.user(
+        id: _generateId(),
+        conversationId: conversationId,
+        content: content,
+        sequenceNo: nextSeq,
+      );
 
-    // Create assistant placeholder
-    final assistantMessage = Message.assistantPlaceholder(
-      id: _generateId(),
-      conversationId: conversationId,
-      sequenceNo: nextSeq + 1,
-      providerId: providerId,
-      modelId: modelId,
-    );
+      // Create assistant placeholder
+      final assistantMessage = Message.assistantPlaceholder(
+        id: _generateId(),
+        conversationId: conversationId,
+        sequenceNo: nextSeq + 1,
+        providerId: providerId,
+        modelId: modelId,
+      );
 
-    // Insert both in batch
-    await _dao.insertBatch([userMessage, assistantMessage]);
-
-    return (userMessage, assistantMessage);
+      await txnDao.insertBatch([userMessage, assistantMessage]);
+      return (userMessage, assistantMessage);
+    });
   }
 
   /// Update streaming content
@@ -113,41 +113,41 @@ class MessageRepository {
     String? providerId,
     String? modelId,
   }) async {
-    // Supersede original and all subsequent messages
-    await _dao.supersedeFromMessage(
-      originalMessageId,
-      conversationId,
-      originalSequenceNo,
-    );
+    return _dao.transaction((txnDao) async {
+      await txnDao.supersedeFromMessage(
+        originalMessageId,
+        conversationId,
+        originalSequenceNo,
+      );
 
-    final nextSeq = await _dao.getNextSequenceNo(conversationId);
-    final groupId = _generateId();
+      final nextSeq = await txnDao.getNextSequenceNo(conversationId);
+      final groupId = _generateId();
 
-    // Create edited user message
-    final editedMessage = Message.user(
-      id: _generateId(),
-      conversationId: conversationId,
-      content: newContent,
-      sequenceNo: nextSeq,
-    ).copyWith(
-      editedFromMessageId: originalMessageId,
-      generationGroupId: groupId,
-    );
+      // Create edited user message
+      final editedMessage = Message.user(
+        id: _generateId(),
+        conversationId: conversationId,
+        content: newContent,
+        sequenceNo: nextSeq,
+      ).copyWith(
+        editedFromMessageId: originalMessageId,
+        generationGroupId: groupId,
+      );
 
-    // Create assistant placeholder
-    final assistantMessage = Message.assistantPlaceholder(
-      id: _generateId(),
-      conversationId: conversationId,
-      sequenceNo: nextSeq + 1,
-      providerId: providerId,
-      modelId: modelId,
-    ).copyWith(
-      generationGroupId: groupId,
-    );
+      // Create assistant placeholder
+      final assistantMessage = Message.assistantPlaceholder(
+        id: _generateId(),
+        conversationId: conversationId,
+        sequenceNo: nextSeq + 1,
+        providerId: providerId,
+        modelId: modelId,
+      ).copyWith(
+        generationGroupId: groupId,
+      );
 
-    await _dao.insertBatch([editedMessage, assistantMessage]);
-
-    return (editedMessage, assistantMessage);
+      await txnDao.insertBatch([editedMessage, assistantMessage]);
+      return (editedMessage, assistantMessage);
+    });
   }
 
   String _generateId() {

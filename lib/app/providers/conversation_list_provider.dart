@@ -119,6 +119,15 @@ class ConversationListNotifier
     }
   }
 
+  Future<void> unarchiveConversation(String id) async {
+    try {
+      await _conversationRepo.unarchive(id);
+      await refresh();
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+    }
+  }
+
   Future<void> togglePin(String id) async {
     final previous = state.valueOrNull;
 

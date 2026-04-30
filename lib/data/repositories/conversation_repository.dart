@@ -13,7 +13,7 @@ class ConversationRepository {
   /// Get all active conversations
   Future<List<Conversation>> getAll() => _dao.getAllActive();
 
-  /// Get archived (soft-deleted) conversations
+  /// Get archived conversations
   Future<List<Conversation>> getArchived() => _dao.getArchived();
 
   /// Get paginated conversations
@@ -56,6 +56,9 @@ class ConversationRepository {
 
   /// Restore soft-deleted conversation
   Future<void> restore(String id) => _dao.restore(id);
+
+  /// Restore an archived conversation
+  Future<void> unarchive(String id) => _dao.unarchive(id);
 
   /// Purge old deleted conversations (spec FR-CNV-3)
   Future<int> purgeOldDeleted(Duration threshold) => _dao.purgeOldDeleted(threshold);
