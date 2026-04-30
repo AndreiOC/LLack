@@ -53,6 +53,12 @@ final usageSnapshotDaoProvider = FutureProvider<UsageSnapshotDao>((ref) async {
   return UsageSnapshotDao(db);
 });
 
+/// Search DAO provider
+final searchDaoProvider = FutureProvider<SearchDao>((ref) async {
+  final db = await ref.watch(databaseProvider.future);
+  return SearchDao(db);
+});
+
 /// Provider repository provider
 final providerRepositoryProvider =
     FutureProvider<ProviderRepository>((ref) async {
@@ -65,7 +71,8 @@ final providerRepositoryProvider =
 final conversationRepositoryProvider =
     FutureProvider<ConversationRepository>((ref) async {
   final dao = await ref.watch(conversationDaoProvider.future);
-  return ConversationRepository(dao);
+  final searchDao = await ref.watch(searchDaoProvider.future);
+  return ConversationRepository(dao, searchDao: searchDao);
 });
 
 /// Message repository provider

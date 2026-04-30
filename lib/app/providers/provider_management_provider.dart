@@ -60,10 +60,15 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
     return created;
   }
 
-  Future<Provider> updateProvider(Provider provider, {String? apiKey}) async {
+  Future<Provider> updateProvider(
+    Provider provider, {
+    String? apiKey,
+    Map<String, String>? headers,
+  }) async {
     final updated = await _providerRepo.update(
       provider,
       newApiKey: apiKey != null && apiKey.isNotEmpty ? apiKey : null,
+      newHeaders: headers,
     );
     await load();
     return updated;
@@ -73,11 +78,13 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
     Provider provider, {
     String? apiKey,
     bool clearApiKey = false,
+    Map<String, String>? headers,
   }) async {
     final updated = await _providerRepo.update(
       provider,
       newApiKey: apiKey != null && apiKey.isNotEmpty ? apiKey : null,
       clearApiKey: clearApiKey,
+      newHeaders: headers,
     );
     await load();
     return updated;

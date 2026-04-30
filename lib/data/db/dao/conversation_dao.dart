@@ -7,6 +7,16 @@ class ConversationDao {
 
   ConversationDao(this._db);
 
+  /// Get archived conversations (soft-deleted but not purged)
+  Future<List<Conversation>> getArchived() async {
+    final maps = await _db.query(
+      'conversations',
+      where: 'deleted_at IS NOT NULL',
+      orderBy: 'deleted_at DESC',
+    );
+    return maps.map((m) => Conversation.fromJson(m)).toList();
+  }
+
   /// Get all active conversations ordered by pinned first, then updated
   Future<List<Conversation>> getAllActive() async {
     final maps = await _db.query(

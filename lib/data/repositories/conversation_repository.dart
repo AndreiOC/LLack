@@ -5,12 +5,16 @@ import 'package:uuid/uuid.dart';
 /// Repository for Conversation operations
 class ConversationRepository {
   final ConversationDao _dao;
+  final SearchDao? _searchDao;
   static const Uuid _uuid = Uuid();
 
-  ConversationRepository(this._dao);
+  ConversationRepository(this._dao, {SearchDao? searchDao}) : _searchDao = searchDao;
 
   /// Get all active conversations
   Future<List<Conversation>> getAll() => _dao.getAllActive();
+
+  /// Get archived (soft-deleted) conversations
+  Future<List<Conversation>> getArchived() => _dao.getArchived();
 
   /// Get paginated conversations
   Future<List<Conversation>> getPaginated({int limit = 20, int offset = 0}) {
@@ -100,8 +104,14 @@ class ConversationRepository {
     return _dao.updateProviderModel(id, providerId, modelId);
   }
 
-  /// Search by title
-  Future<List<Conversation>> search(String query) => _dao.searchByTitle(query);
+  /// Search by title (uses FTS5 when available).
+  Future<List<Conversation>> search(String query) async {
+    if (_searchDao != null) {
+      final results = await _searchDao!.searchAll(query);
+      return results.map((r) => r.conversation).toList();
+    }
+    return _dao.searchByTitle(query);
+  }
 
   /// Get active count
   Future<int> getCount() => _dao.getActiveCount();

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart' hide Provider;
 
 import '../../app/providers/providers.dart';
 import '../../domain/entities/entities.dart';
+import '../../platform/secure_storage/secure_storage.dart';
 
 Future<Provider?> showProviderEditorSheet(
   BuildContext context, {
@@ -751,7 +752,9 @@ class _ProviderEditorSheetState extends ConsumerState<ProviderEditorSheet> {
     try {
       final draft = _draftProvider().copyWith(defaultModelId: modelId);
       final apiKeyForValidation = await _resolveApiKeyForDraft();
+      // Spec FR-PRV-5: Ollama endpoints are not hard-gated on successful probe.
       final requiresConnectivityValidation =
+          _selectedKind != ProviderKind.ollama &&
           !(_selectedKind == ProviderKind.openaiCompatible &&
               _clearStoredApiKey &&
               _apiKeyController.text.trim().isEmpty);
@@ -784,6 +787,7 @@ class _ProviderEditorSheetState extends ConsumerState<ProviderEditorSheet> {
               ? null
               : _apiKeyController.text.trim(),
           clearApiKey: shouldClearApiKey,
+          headers: _buildHeaders(),
         );
       } else {
         savedProvider = await notifier.addProvider(
@@ -1305,33 +1309,10 @@ class _HeadersEditor extends StatelessWidget {
             ),
           ),
         ...rows.map(
-          (row) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Row(
-              children: <Widget>[
-                Expanded(
-                  child: TextField(
-                    controller: row.keyController,
-                    decoration: const InputDecoration(
-                      labelText: 'Header key',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: row.valueController,
-                    decoration: const InputDecoration(
-                      labelText: 'Header value',
-                    ),
-                  ),
-                ),
-                IconButton(
-                  onPressed: rows.length == 1 ? null : () => onRemoveRow(row),
-                  icon: const Icon(Icons.delete_outline_rounded),
-                ),
-              ],
-            ),
+          (row) => _HeaderRow(
+            row: row,
+            canRemove: rows.length > 1,
+            onRemove: () => onRemoveRow(row),
           ),
         ),
         if (validationMessage != null)
@@ -1346,6 +1327,91 @@ class _HeadersEditor extends StatelessWidget {
           ),
         const SizedBox(height: 6),
       ],
+    );
+  }
+}
+
+class _HeaderRow extends StatefulWidget {
+  final _HeaderRowController row;
+  final bool canRemove;
+  final VoidCallback onRemove;
+
+  const _HeaderRow({
+    required this.row,
+    required this.canRemove,
+    required this.onRemove,
+  });
+
+  @override
+  State<_HeaderRow> createState() => _HeaderRowState();
+}
+
+class _HeaderRowState extends State<_HeaderRow> {
+  bool _obscure = true;
+
+  bool get _isSecret =>
+      SecureStorageService.isSecretHeaderKey(widget.row.keyController.text);
+
+  @override
+  void initState() {
+    super.initState();
+    widget.row.keyController.addListener(_onKeyChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.row.keyController.removeListener(_onKeyChanged);
+    super.dispose();
+  }
+
+  void _onKeyChanged() {
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isSecret = _isSecret;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: TextField(
+              controller: widget.row.keyController,
+              decoration: const InputDecoration(
+                labelText: 'Header key',
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: widget.row.valueController,
+              obscureText: isSecret && _obscure,
+              decoration: InputDecoration(
+                labelText: 'Header value',
+                suffixIcon: isSecret
+                    ? IconButton(
+                        icon: Icon(
+                          _obscure
+                              ? Icons.visibility_outlined
+                              : Icons.visibility_off_outlined,
+                          size: 18,
+                        ),
+                        onPressed: () {
+                          setState(() => _obscure = !_obscure);
+                        },
+                      )
+                    : null,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: widget.canRemove ? widget.onRemove : null,
+            icon: const Icon(Icons.delete_outline_rounded),
+          ),
+        ],
+      ),
     );
   }
 }

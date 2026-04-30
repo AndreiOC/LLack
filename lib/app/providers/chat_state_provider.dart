@@ -7,6 +7,7 @@ import '../../data/repositories/conversation_repository.dart';
 import '../../data/repositories/message_repository.dart';
 import '../../data/repositories/provider_repository.dart';
 import '../../data/services/chat_service.dart';
+import '../../data/services/logging_service.dart';
 import '../../data/services/outbox_service.dart';
 import '../../domain/entities/entities.dart';
 import '../../domain/errors/chat_errors.dart';
@@ -264,6 +265,12 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
     await _reloadCurrentConversation(error: 'Response cancelled.');
   }
 
+  Future<void> retryAllOutbox() async {
+    await _ensureDependencies();
+    await _outboxService?.processQueue();
+    await _reloadCurrentConversation();
+  }
+
   Future<void> retryMessage(String id) async {
     final current = await future;
     final index = current.messages.indexWhere((message) => message.id == id);
@@ -272,6 +279,15 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
     }
 
     final message = current.messages[index];
+
+    // If the message is queued, retry through the outbox for immediate processing.
+    if (message.status == MessageStatus.queued) {
+      await _ensureDependencies();
+      await _outboxService?.retryJobForMessage(message.id);
+      await _reloadCurrentConversation();
+      return;
+    }
+
     String? content;
     if (message.isUser) {
       content = message.contentMarkdown;
@@ -690,7 +706,7 @@ class ChatStateNotifier extends AutoDisposeAsyncNotifier<ChatState> {
           'content': content,
           'modelId': modelId,
           'providerBaseUrl': provider.baseUrl,
-          'providerHeaders': provider.headers,
+          'providerHeaders': LoggingService.redactHeaders(provider.headers),
           'conversationId': conversationId,
           'originalError': error?.toString(),
         },

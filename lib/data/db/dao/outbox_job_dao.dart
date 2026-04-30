@@ -123,6 +123,21 @@ class OutboxJobDao {
     );
   }
 
+  /// Reset a retry-wait or failed job back to pending for immediate processing.
+  Future<void> resetToPending(String id) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.update(
+      'outbox_jobs',
+      {
+        'status': OutboxJobStatus.pending.storageName,
+        'next_retry_at': null,
+        'updated_at': now,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   /// Mark job as cancelled
   Future<void> markCancelled(String id) async {
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -159,6 +174,19 @@ class OutboxJobDao {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  /// Get job by message ID
+  Future<OutboxJob?> getByMessageId(String messageId) async {
+    final maps = await _db.query(
+      'outbox_jobs',
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    if (maps.isEmpty) return null;
+    return OutboxJob.fromJson(maps.first);
   }
 
   /// Get count of pending jobs

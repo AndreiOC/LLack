@@ -126,6 +126,11 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                   .prepareNewConversation();
             }
           },
+          onRestore: (conversationId) async {
+            await ref
+                .read(conversationListProvider.notifier)
+                .restoreConversation(conversationId);
+          },
           onRename: (conversationId, newTitle) async {
             await ref
                 .read(conversationListProvider.notifier)
@@ -176,6 +181,11 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                     await ref
                         .read(chatStateProvider.notifier)
                         .retryMessage(messageId);
+                  },
+                  onRetryAllOutbox: () async {
+                    await ref
+                        .read(chatStateProvider.notifier)
+                        .retryAllOutbox();
                   },
                   onDeleteMessage: (messageId) async {
                     await ref
@@ -343,11 +353,11 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
 
   Future<void> _deleteConversation(
     String conversationId,
-    AsyncValue<List<Conversation>> conversationsAsync,
+    AsyncValue<ConversationListState> conversationsAsync,
     AsyncValue<ChatState> chatAsync,
   ) async {
     final conversation = conversationsAsync.valueOrNull
-        ?.firstWhere((c) => c.id == conversationId);
+        ?.conversations.firstWhere((c) => c.id == conversationId);
     final scaffoldContext = context;
     await ref
         .read(conversationListProvider.notifier)
@@ -377,13 +387,14 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
 }
 
 class _ConversationRail extends ConsumerStatefulWidget {
-  final AsyncValue<List<Conversation>> conversationsAsync;
+  final AsyncValue<ConversationListState> conversationsAsync;
   final String selectedConversationId;
   final Future<void> Function() onNewConversation;
   final Future<void> Function(String conversationId) onOpenConversation;
   final Future<void> Function(String conversationId) onDeleteConversation;
   final Future<void> Function(String conversationId) onTogglePin;
   final Future<void> Function(String conversationId) onArchive;
+  final Future<void> Function(String conversationId) onRestore;
   final Future<void> Function(String conversationId, String newTitle) onRename;
   final Future<void> Function(Conversation conversation) onExport;
 
@@ -395,6 +406,7 @@ class _ConversationRail extends ConsumerStatefulWidget {
     required this.onDeleteConversation,
     required this.onTogglePin,
     required this.onArchive,
+    required this.onRestore,
     required this.onRename,
     required this.onExport,
   });
@@ -406,6 +418,7 @@ class _ConversationRail extends ConsumerStatefulWidget {
 class _ConversationRailState extends ConsumerState<_ConversationRail> {
   final TextEditingController _searchController = TextEditingController();
   bool _isSearching = false;
+  bool _showArchived = false;
 
   @override
   void dispose() {
@@ -492,8 +505,9 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
             const SizedBox(height: 18),
             Expanded(
               child: widget.conversationsAsync.when(
-                data: (conversations) {
-                  if (conversations.isEmpty) {
+                data: (listState) {
+                  final conversations = listState.conversations;
+                  if (conversations.isEmpty && !_showArchived) {
                     return Center(
                       child: Text(
                         _isSearching
@@ -517,9 +531,15 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
                     },
                     child: ListView.separated(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: conversations.length,
+                      itemCount: conversations.length + (_showArchived ? 0 : 1),
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
+                        if (!_showArchived && index == conversations.length) {
+                          return _ArchivedToggle(
+                            showArchived: _showArchived,
+                            onToggle: () => setState(() => _showArchived = true),
+                          );
+                        }
                         final conversation = conversations[index];
                         final isSelected =
                             conversation.id == widget.selectedConversationId;
@@ -530,6 +550,7 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
                           onDelete: () => widget.onDeleteConversation(conversation.id),
                           onTogglePin: () => widget.onTogglePin(conversation.id),
                           onArchive: () => widget.onArchive(conversation.id),
+                          onRestore: () {},
                           onRename: (newTitle) => widget.onRename(conversation.id, newTitle),
                           onExport: () => widget.onExport(conversation),
                         );
@@ -549,8 +570,162 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
                 ),
               ),
             ),
+            if (_showArchived)
+              _ArchivedSection(
+                selectedConversationId: widget.selectedConversationId,
+                onOpenConversation: widget.onOpenConversation,
+                onRestore: widget.onRestore,
+                onDelete: widget.onDeleteConversation,
+                onHide: () => setState(() => _showArchived = false),
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ArchivedToggle extends StatelessWidget {
+  final bool showArchived;
+  final VoidCallback onToggle;
+
+  const _ArchivedToggle({required this.showArchived, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onToggle,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        child: Row(
+          children: <Widget>[
+            const Icon(Icons.archive_outlined, color: Color(0xFFCFBCA8), size: 18),
+            const SizedBox(width: 8),
+            Text(
+              'Show archived',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFFCFBCA8),
+              ),
+            ),
+            const Spacer(),
+            const Icon(Icons.chevron_right, color: Color(0xFFCFBCA8), size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ArchivedSection extends ConsumerStatefulWidget {
+  final String selectedConversationId;
+  final Future<void> Function(String conversationId) onOpenConversation;
+  final Future<void> Function(String conversationId) onRestore;
+  final Future<void> Function(String conversationId) onDelete;
+  final VoidCallback onHide;
+
+  const _ArchivedSection({
+    required this.selectedConversationId,
+    required this.onOpenConversation,
+    required this.onRestore,
+    required this.onDelete,
+    required this.onHide,
+  });
+
+  @override
+  ConsumerState<_ArchivedSection> createState() => _ArchivedSectionState();
+}
+
+class _ArchivedSectionState extends ConsumerState<_ArchivedSection> {
+  late Future<List<Conversation>> _archivedFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadArchived();
+  }
+
+  void _loadArchived() {
+    _archivedFuture = ref.read(conversationListProvider.notifier).getArchived();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0x1AF7F1EA),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      margin: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          InkWell(
+            onTap: widget.onHide,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+              child: Row(
+                children: <Widget>[
+                  const Icon(Icons.unarchive_outlined, color: Color(0xFFCFBCA8), size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Archived',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFFCFBCA8),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  const Icon(Icons.expand_more, color: Color(0xFFCFBCA8), size: 18),
+                ],
+              ),
+            ),
+          ),
+          const Divider(height: 1, color: Color(0x33CFBCA8)),
+          FutureBuilder<List<Conversation>>(
+            future: _archivedFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+                );
+              }
+              if (snapshot.hasError) {
+                return Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text('Error: ${snapshot.error}', style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFFFFD7D7))),
+                );
+              }
+              final archived = snapshot.data ?? [];
+              if (archived.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text('No archived conversations.', style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFFCFBCA8))),
+                );
+              }
+              return Column(
+                children: archived.map((conversation) {
+                  final isSelected = conversation.id == widget.selectedConversationId;
+                  return _ConversationTile(
+                    conversation: conversation,
+                    isSelected: isSelected,
+                    isArchived: true,
+                    onTap: () => widget.onOpenConversation(conversation.id),
+                    onDelete: () => widget.onDelete(conversation.id),
+                    onTogglePin: () {},
+                    onArchive: () {},
+                    onRestore: () => widget.onRestore(conversation.id),
+                    onRename: (_) {},
+                    onExport: () {},
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -559,20 +734,24 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
 class _ConversationTile extends StatelessWidget {
   final Conversation conversation;
   final bool isSelected;
+  final bool isArchived;
   final VoidCallback onTap;
   final VoidCallback onDelete;
   final VoidCallback onTogglePin;
   final VoidCallback onArchive;
+  final VoidCallback onRestore;
   final ValueChanged<String> onRename;
   final VoidCallback onExport;
 
   const _ConversationTile({
     required this.conversation,
     required this.isSelected,
+    this.isArchived = false,
     required this.onTap,
     required this.onDelete,
     required this.onTogglePin,
     required this.onArchive,
+    required this.onRestore,
     required this.onRename,
     required this.onExport,
   });
@@ -630,28 +809,39 @@ class _ConversationTile extends StatelessWidget {
               ),
               PopupMenuButton<_ConversationAction>(
                 iconColor: const Color(0xFFCFBCA8),
-                itemBuilder: (context) => <PopupMenuEntry<_ConversationAction>>[
-                  PopupMenuItem<_ConversationAction>(
-                    value: _ConversationAction.pin,
-                    child: Text(conversation.isPinned ? 'Unpin' : 'Pin'),
-                  ),
-                  const PopupMenuItem<_ConversationAction>(
-                    value: _ConversationAction.rename,
-                    child: Text('Rename'),
-                  ),
-                  const PopupMenuItem<_ConversationAction>(
-                    value: _ConversationAction.export,
-                    child: Text('Export'),
-                  ),
-                  const PopupMenuItem<_ConversationAction>(
-                    value: _ConversationAction.archive,
-                    child: Text('Archive'),
-                  ),
-                  const PopupMenuItem<_ConversationAction>(
-                    value: _ConversationAction.delete,
-                    child: Text('Delete'),
-                  ),
-                ],
+                itemBuilder: (context) => isArchived
+                    ? <PopupMenuEntry<_ConversationAction>>[
+                        const PopupMenuItem<_ConversationAction>(
+                          value: _ConversationAction.restore,
+                          child: Text('Restore'),
+                        ),
+                        const PopupMenuItem<_ConversationAction>(
+                          value: _ConversationAction.delete,
+                          child: Text('Delete'),
+                        ),
+                      ]
+                    : <PopupMenuEntry<_ConversationAction>>[
+                        PopupMenuItem<_ConversationAction>(
+                          value: _ConversationAction.pin,
+                          child: Text(conversation.isPinned ? 'Unpin' : 'Pin'),
+                        ),
+                        const PopupMenuItem<_ConversationAction>(
+                          value: _ConversationAction.rename,
+                          child: Text('Rename'),
+                        ),
+                        const PopupMenuItem<_ConversationAction>(
+                          value: _ConversationAction.export,
+                          child: Text('Export'),
+                        ),
+                        const PopupMenuItem<_ConversationAction>(
+                          value: _ConversationAction.archive,
+                          child: Text('Archive'),
+                        ),
+                        const PopupMenuItem<_ConversationAction>(
+                          value: _ConversationAction.delete,
+                          child: Text('Delete'),
+                        ),
+                      ],
                 onSelected: (action) {
                   switch (action) {
                     case _ConversationAction.pin:
@@ -665,6 +855,9 @@ class _ConversationTile extends StatelessWidget {
                       break;
                     case _ConversationAction.archive:
                       onArchive();
+                      break;
+                    case _ConversationAction.restore:
+                      onRestore();
                       break;
                     case _ConversationAction.delete:
                       onDelete();
@@ -717,7 +910,7 @@ class _ConversationTile extends StatelessWidget {
   }
 }
 
-enum _ConversationAction { pin, rename, export, archive, delete }
+enum _ConversationAction { pin, rename, export, archive, restore, delete }
 
 class _ChatPanel extends StatelessWidget {
   final ChatState chatState;
@@ -739,6 +932,7 @@ class _ChatPanel extends StatelessWidget {
   final Future<void> Function() onOpenProviderManagement;
   final Future<void> Function(UsageThresholdState state) onDismissUsageBanner;
   final Future<void> Function() onRestartOnboarding;
+  final Future<void> Function() onRetryAllOutbox;
 
   const _ChatPanel({
     required this.chatState,
@@ -760,6 +954,7 @@ class _ChatPanel extends StatelessWidget {
     required this.onOpenProviderManagement,
     required this.onDismissUsageBanner,
     required this.onRestartOnboarding,
+    required this.onRetryAllOutbox,
   });
 
   @override
@@ -796,27 +991,19 @@ class _ChatPanel extends StatelessWidget {
             onOpenUsageDashboard: onOpenUsageDashboard,
             onDismiss: () => onDismissUsageBanner(overview.thresholdState),
           ),
+        if (chatState.messages.any((m) => m.status == MessageStatus.queued))
+          _PendingOutboxBanner(
+            onRetryAll: onRetryAllOutbox,
+          ),
         Expanded(
           child: chatState.messages.isEmpty
               ? _EmptyConversationState(selectedProvider: selectedProvider)
-              : ListView.separated(
-                  controller: scrollController,
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
-                  itemCount: chatState.messages.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 16),
-                  itemBuilder: (context, index) {
-                    final message = chatState.messages[index];
-                    return _MessageBubble(
-                      message: message,
-                      onRetry: message.canRetry
-                          ? () => onRetryMessage(message.id)
-                          : null,
-                      onDelete: () => onDeleteMessage(message.id),
-                      onEdit: message.isEditable
-                          ? (newContent) => onEditMessage(message.id, newContent)
-                          : null,
-                    );
-                  },
+              : _MessageList(
+                  messages: chatState.messages,
+                  scrollController: scrollController,
+                  onRetryMessage: onRetryMessage,
+                  onDeleteMessage: onDeleteMessage,
+                  onEditMessage: onEditMessage,
                 ),
         ),
         _Composer(
@@ -829,6 +1016,44 @@ class _ChatPanel extends StatelessWidget {
           onCancel: onCancelStream,
         ),
       ],
+    );
+  }
+}
+
+class _PendingOutboxBanner extends StatelessWidget {
+  final Future<void> Function() onRetryAll;
+
+  const _PendingOutboxBanner({required this.onRetryAll});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: const BoxDecoration(
+        color: Color(0xFFFFF8E1),
+        border: Border(
+          bottom: BorderSide(color: Color(0xFFFFE082)),
+        ),
+      ),
+      child: Row(
+        children: <Widget>[
+          const Icon(Icons.pending_outlined, color: Color(0xFFF9A825), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Some messages are queued and will retry automatically.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: const Color(0xFF5F4634),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: onRetryAll,
+            child: const Text('Retry all'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1337,6 +1562,115 @@ class _MessageBubble extends StatelessWidget {
       MessageStatus.superseded => 'Superseded',
     };
     return '$status · $time';
+  }
+}
+
+class _MessageList extends StatelessWidget {
+  final List<Message> messages;
+  final ScrollController scrollController;
+  final Future<void> Function(String messageId) onRetryMessage;
+  final Future<void> Function(String messageId) onDeleteMessage;
+  final Future<void> Function(String messageId, String newContent) onEditMessage;
+
+  const _MessageList({
+    required this.messages,
+    required this.scrollController,
+    required this.onRetryMessage,
+    required this.onDeleteMessage,
+    required this.onEditMessage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Build items including provider/model switch dividers (spec FR-SWT-4)
+    final items = <Widget>[];
+    for (int i = 0; i < messages.length; i++) {
+      final message = messages[i];
+      if (i > 0) {
+        final previous = messages[i - 1];
+        if (_shouldShowDivider(previous, message)) {
+          items.add(_ModelSwitchDivider(
+            previousProviderId: previous.providerId,
+            previousModelId: previous.modelId,
+            currentProviderId: message.providerId,
+            currentModelId: message.modelId,
+          ));
+        }
+        items.add(const SizedBox(height: 16));
+      }
+      items.add(_MessageBubble(
+        message: message,
+        onRetry: message.canRetry || message.status == MessageStatus.queued
+            ? () => onRetryMessage(message.id)
+            : null,
+        onDelete: () => onDeleteMessage(message.id),
+        onEdit: message.isEditable
+            ? (newContent) => onEditMessage(message.id, newContent)
+            : null,
+      ));
+    }
+
+    return ListView.builder(
+      controller: scrollController,
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+      itemCount: items.length,
+      itemBuilder: (context, index) => items[index],
+    );
+  }
+
+  bool _shouldShowDivider(Message previous, Message current) {
+    // Only show divider when provider or model changes between assistant messages,
+    // or from a user message to an assistant message with a different model.
+    if (current.providerId == null && current.modelId == null) return false;
+    return previous.providerId != current.providerId ||
+        previous.modelId != current.modelId;
+  }
+}
+
+class _ModelSwitchDivider extends StatelessWidget {
+  final String? previousProviderId;
+  final String? previousModelId;
+  final String? currentProviderId;
+  final String? currentModelId;
+
+  const _ModelSwitchDivider({
+    this.previousProviderId,
+    this.previousModelId,
+    required this.currentProviderId,
+    required this.currentModelId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final parts = <String>[];
+    if (currentProviderId != null && currentProviderId != previousProviderId) {
+      parts.add(currentProviderId!);
+    }
+    if (currentModelId != null && currentModelId != previousModelId) {
+      parts.add(currentModelId!);
+    }
+    if (parts.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: <Widget>[
+          Expanded(child: Divider(color: theme.colorScheme.outlineVariant)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              parts.join(' · '),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+          Expanded(child: Divider(color: theme.colorScheme.outlineVariant)),
+        ],
+      ),
+    );
   }
 }
 

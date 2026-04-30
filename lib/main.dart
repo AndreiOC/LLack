@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/providers/providers.dart';
+import 'data/services/logging_service.dart';
+import 'data/services/notification_service.dart';
 import 'data/services/outbox_service.dart';
+import 'data/services/usage_service.dart';
 import 'features/chat/chat_workspace.dart';
 import 'features/onboarding/onboarding_flow.dart';
 
@@ -131,7 +134,21 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _initializeOutbox();
+    _initializeServices();
+  }
+
+  Future<void> _initializeServices() async {
+    await _initializeNotifications();
+    await _initializeOutbox();
+    await _runRetentionPurge();
+  }
+
+  Future<void> _initializeNotifications() async {
+    try {
+      await NotificationService().initialize();
+    } catch (e, stack) {
+      LoggingService.instance.warning('Failed to initialize notifications', error: e, stackTrace: stack);
+    }
   }
 
   Future<void> _initializeOutbox() async {
@@ -139,8 +156,22 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
       final service = await ref.read(outboxServiceProvider.future);
       _outboxService = service;
       service.startPolling();
-    } catch (_) {
+    } catch (e, stack) {
       // Outbox is optional; don't block app launch on failure.
+      LoggingService.instance.warning('Failed to initialize outbox', error: e, stackTrace: stack);
+    }
+  }
+
+  /// Purge conversations soft-deleted more than 30 days ago (spec FR-CNV-3).
+  Future<void> _runRetentionPurge() async {
+    try {
+      final repo = await ref.read(conversationRepositoryProvider.future);
+      final deleted = await repo.purgeOldDeleted(const Duration(days: 30));
+      if (deleted > 0) {
+        LoggingService.instance.info('Retention purge: removed $deleted old deleted conversations');
+      }
+    } catch (e, stack) {
+      LoggingService.instance.warning('Retention purge failed', error: e, stackTrace: stack);
     }
   }
 
@@ -160,6 +191,21 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   Widget build(BuildContext context) {
     final onboardingAsync = ref.watch(onboardingProvider);
     final providersAsync = ref.watch(providerManagementProvider);
+
+    // Listen for spending threshold changes and show local notifications
+    ref.listen<AsyncValue<UsageOverview>>(usageOverviewProvider, (previous, next) {
+      final prevState = previous?.valueOrNull?.thresholdState;
+      final nextState = next.valueOrNull?.thresholdState;
+      if (nextState != null && nextState != UsageThresholdState.none && nextState != prevState) {
+        final title = nextState == UsageThresholdState.exceeded
+            ? 'Monthly spend threshold exceeded'
+            : 'Monthly spend threshold approaching';
+        final body = nextState == UsageThresholdState.exceeded
+            ? 'Your cloud provider spending has crossed the monthly limit.'
+            : 'You are at 80% of your monthly spend threshold.';
+        NotificationService().showSpendingAlert(title: title, body: body);
+      }
+    });
 
     return onboardingAsync.when(
       data: (onboardingState) {

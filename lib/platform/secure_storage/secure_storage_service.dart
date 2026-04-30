@@ -55,4 +55,52 @@ class SecureStorageService {
   String generateProviderKeyRef(String providerId) {
     return 'provider_api_key_$providerId';
   }
+
+  // ---- Provider Header Secrets ----
+
+  static final _secretHeaderKeyPattern = RegExp(
+    r'^(authorization|x-api-key|api-key|api_key|apikey|token|access_token|secret|password|key)$',
+    caseSensitive: false,
+  );
+
+  /// Whether a header key looks like it contains a secret.
+  static bool isSecretHeaderKey(String key) {
+    return _secretHeaderKeyPattern.hasMatch(key.trim());
+  }
+
+  static String _headerStorageKey(String providerId, String headerKey) {
+    return 'provider_header_${providerId}_${headerKey.trim().toLowerCase()}';
+  }
+
+  /// Store a single secret header value for a provider.
+  Future<void> storeProviderHeaderSecret(
+    String providerId,
+    String headerKey,
+    String value,
+  ) async {
+    await write(_headerStorageKey(providerId, headerKey), value);
+  }
+
+  /// Read a single secret header value for a provider.
+  Future<String?> getProviderHeaderSecret(
+    String providerId,
+    String headerKey,
+  ) async {
+    return await read(_headerStorageKey(providerId, headerKey));
+  }
+
+  /// Delete a single secret header value for a provider.
+  Future<void> deleteProviderHeaderSecret(
+    String providerId,
+    String headerKey,
+  ) async {
+    await delete(_headerStorageKey(providerId, headerKey));
+  }
+
+  /// Delete all stored header secrets for a provider.
+  Future<void> deleteAllProviderHeaderSecrets(String providerId) async {
+    // flutter_secure_storage does not support listing keys, so we rely on
+    // the provider repository to track which secret headers exist and delete
+    // them individually.
+  }
 }

@@ -74,6 +74,12 @@ class InternalError extends ChatError {
   const InternalError(super.message, {super.code, super.originalError});
 }
 
+/// Security errors: TLS/HTTPS enforcement failures.
+/// Retry: never. User message: 'Insecure connection not allowed'.
+class SecurityError extends ChatError {
+  const SecurityError(super.message, {super.code, super.originalError});
+}
+
 /// Cancellation: user cancelled the stream.
 /// Not really an error, but needs categorization for state management.
 class CancellationError extends ChatError {

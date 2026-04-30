@@ -13,18 +13,29 @@ class ProviderRepository {
   ProviderRepository(this._dao, this._secureStorage);
 
   /// Get all active providers
-  Future<List<Provider>> getAll({bool includeDeleted = false}) {
-    return _dao.getAll(includeDeleted: includeDeleted);
+  Future<List<Provider>> getAll({bool includeDeleted = false}) async {
+    final providers = await _dao.getAll(includeDeleted: includeDeleted);
+    return Future.wait(
+      providers.map((p) => _mergeSecretHeaders(p)),
+    );
   }
 
   /// Get soft-deleted providers
   Future<List<Provider>> getDeleted() => _dao.getDeleted();
 
   /// Get provider by ID
-  Future<Provider?> getById(String id) => _dao.getActiveById(id);
+  Future<Provider?> getById(String id) async {
+    final provider = await _dao.getActiveById(id);
+    if (provider == null) return null;
+    return _mergeSecretHeaders(provider);
+  }
 
   /// Get provider by ID including deleted providers
-  Future<Provider?> getAnyById(String id) => _dao.getById(id);
+  Future<Provider?> getAnyById(String id) async {
+    final provider = await _dao.getById(id);
+    if (provider == null) return null;
+    return _mergeSecretHeaders(provider);
+  }
 
   /// Check whether a provider exists
   Future<bool> exists(String id) async => (await _dao.getById(id)) != null;
@@ -44,6 +55,7 @@ class ProviderRepository {
 
     String? apiKeyRef;
     final hasApiKey = apiKey != null && apiKey.isNotEmpty;
+    final (publicHeaders, secretHeaders) = _splitHeaders(id, headers);
 
     try {
       // Spec FR-ONB-2: if secure storage succeeds but metadata persistence
@@ -53,6 +65,10 @@ class ProviderRepository {
         apiKeyRef = _secureStorage.generateProviderKeyRef(id);
       }
 
+      for (final entry in secretHeaders.entries) {
+        await _secureStorage.storeProviderHeaderSecret(id, entry.key, entry.value);
+      }
+
       final provider = Provider(
         id: id,
         kind: kind,
@@ -60,7 +76,7 @@ class ProviderRepository {
         baseUrl: baseUrl,
         apiKeyRef: apiKeyRef,
         defaultModelId: defaultModelId,
-        headers: headers,
+        headers: publicHeaders,
         settings: settings,
         healthStatus: ProviderHealthStatus.neverChecked,
         createdAt: now,
@@ -73,6 +89,9 @@ class ProviderRepository {
       if (hasApiKey) {
         await _secureStorage.deleteProviderApiKey(id);
       }
+      for (final key in secretHeaders.keys) {
+        await _secureStorage.deleteProviderHeaderSecret(id, key);
+      }
       rethrow;
     }
   }
@@ -82,10 +101,23 @@ class ProviderRepository {
     Provider provider, {
     String? newApiKey,
     bool clearApiKey = false,
+    Map<String, String>? newHeaders,
   }) async {
     final trimmedApiKey = newApiKey?.trim();
     final shouldClearApiKey = clearApiKey || trimmedApiKey == '';
     final previousApiKey = await _secureStorage.getProviderApiKey(provider.id);
+
+    final previousSecretHeaders = <String, String?>{};
+    for (final key in provider.headers.keys) {
+      if (SecureStorageService.isSecretHeaderKey(key)) {
+        previousSecretHeaders[key] =
+            await _secureStorage.getProviderHeaderSecret(provider.id, key);
+      }
+    }
+
+    final (publicHeaders, secretHeaders) = newHeaders != null
+        ? _splitHeaders(provider.id, newHeaders)
+        : (provider.headers, <String, String>{});
 
     try {
       // Spec FR-ONB-2: keep provider metadata and secure storage updates in
@@ -96,12 +128,25 @@ class ProviderRepository {
         await _secureStorage.storeProviderApiKey(provider.id, trimmedApiKey);
       }
 
+      // Clear old secret headers that are no longer present.
+      for (final oldKey in previousSecretHeaders.keys) {
+        if (!secretHeaders.containsKey(oldKey)) {
+          await _secureStorage.deleteProviderHeaderSecret(provider.id, oldKey);
+        }
+      }
+      // Store new secret headers.
+      for (final entry in secretHeaders.entries) {
+        await _secureStorage.storeProviderHeaderSecret(
+            provider.id, entry.key, entry.value);
+      }
+
       final updated = provider.copyWith(
         apiKeyRef: shouldClearApiKey
             ? null
             : (trimmedApiKey != null
                 ? _secureStorage.generateProviderKeyRef(provider.id)
                 : provider.apiKeyRef),
+        headers: publicHeaders,
         updatedAt: DateTime.now(),
       );
 
@@ -113,6 +158,14 @@ class ProviderRepository {
       } else {
         await _secureStorage.deleteProviderApiKey(provider.id);
       }
+      for (final entry in previousSecretHeaders.entries) {
+        if (entry.value != null) {
+          await _secureStorage.storeProviderHeaderSecret(
+              provider.id, entry.key, entry.value!);
+        } else {
+          await _secureStorage.deleteProviderHeaderSecret(provider.id, entry.key);
+        }
+      }
       rethrow;
     }
   }
@@ -122,6 +175,7 @@ class ProviderRepository {
     Provider provider, {
     String? apiKey,
     bool clearApiKey = false,
+    Map<String, String>? headers,
   }) async {
     final existing = await _dao.getById(provider.id);
     if (existing == null) {
@@ -152,6 +206,7 @@ class ProviderRepository {
       provider.copyWith(createdAt: existing.createdAt),
       newApiKey: apiKey,
       clearApiKey: clearApiKey,
+      newHeaders: headers,
     );
   }
 
@@ -171,6 +226,60 @@ class ProviderRepository {
   Future<void> deletePermanently(String id) async {
     await _secureStorage.deleteProviderApiKey(id);
     await _dao.deletePermanently(id);
+  }
+
+  // ---- Header Secret Helpers ----
+
+  (Map<String, String> public, Map<String, String> secret) _splitHeaders(
+    String providerId,
+    Map<String, String> headers,
+  ) {
+    final public = <String, String>{};
+    final secret = <String, String>{};
+    for (final entry in headers.entries) {
+      if (SecureStorageService.isSecretHeaderKey(entry.key)) {
+        secret[entry.key] = entry.value;
+      } else {
+        public[entry.key] = entry.value;
+      }
+    }
+    return (public, secret);
+  }
+
+  Future<Provider> _mergeSecretHeaders(Provider provider) async {
+    final merged = Map<String, String>.from(provider.headers);
+    for (final key in provider.headers.keys) {
+      if (SecureStorageService.isSecretHeaderKey(key)) {
+        final secret = await _secureStorage.getProviderHeaderSecret(provider.id, key);
+        if (secret != null) {
+          merged[key] = secret;
+        }
+      }
+    }
+    // Also check for secret headers that exist in secure storage but not in SQLite
+    // (this handles the case where headers were previously saved with secrets).
+    // Since we can't list secure storage keys, we check common secret header names.
+    const commonSecretKeys = [
+      'Authorization',
+      'X-API-Key',
+      'API-Key',
+      'API_Key',
+      'APIKey',
+      'Token',
+      'Access-Token',
+      'Secret',
+      'Password',
+      'Key',
+    ];
+    for (final key in commonSecretKeys) {
+      if (!merged.containsKey(key)) {
+        final secret = await _secureStorage.getProviderHeaderSecret(provider.id, key);
+        if (secret != null) {
+          merged[key] = secret;
+        }
+      }
+    }
+    return provider.copyWith(headers: merged);
   }
 
   /// Get provider's API key

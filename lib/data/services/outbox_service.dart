@@ -76,6 +76,20 @@ class OutboxService extends WidgetsBindingObserver {
   /// Manually trigger a queue processing cycle.
   Future<void> processQueue() => _processQueue();
 
+  /// Retry a specific outbox job by its associated message ID.
+  /// Resets retry state and processes the job immediately.
+  Future<void> retryJobForMessage(String messageId) async {
+    final job = await _outboxDao.getByMessageId(messageId);
+    if (job == null) return;
+
+    // Only retry if the job is not already processing or completed.
+    if (job.isProcessing || job.isCompleted) return;
+
+    // Reset to pending so it will be picked up immediately.
+    await _outboxDao.resetToPending(job.id);
+    await _processJob(job.copyWith(status: OutboxJobStatus.pending));
+  }
+
   /// Get count of pending jobs (for UI badges).
   Future<int> getPendingCount() => _outboxDao.getPendingCount();
 

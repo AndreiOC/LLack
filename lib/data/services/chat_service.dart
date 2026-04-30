@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import '../../data/repositories/repositories.dart';
 import '../../data/services/adapters/adapters.dart';
+import '../../data/services/logging_service.dart';
 import '../../data/services/usage_service.dart';
 import '../../domain/entities/entities.dart';
 import '../../domain/errors/chat_errors.dart';
@@ -15,6 +16,7 @@ class ChatService {
   final MessageRepository _messageRepo;
   final ProviderModelRepository? _providerModelRepo;
   final UsageService? _usageService;
+  final ChatProviderAdapter Function(Provider)? _testAdapterFactory;
   final Map<String, CancelToken> _activeCancelTokens = {};
 
   ChatService({
@@ -23,11 +25,13 @@ class ChatService {
     required MessageRepository messageRepo,
     ProviderModelRepository? providerModelRepo,
     UsageService? usageService,
+    ChatProviderAdapter Function(Provider)? testAdapterFactory,
   })  : _providerRepo = providerRepo,
         _conversationRepo = conversationRepo,
         _messageRepo = messageRepo,
         _providerModelRepo = providerModelRepo,
-        _usageService = usageService;
+        _usageService = usageService,
+        _testAdapterFactory = testAdapterFactory;
 
   /// Create a new conversation and send first message
   Future<
@@ -99,6 +103,12 @@ class ChatService {
     required List<ChatMessage> messages,
     Map<String, dynamic>? parameters,
   }) async* {
+    LoggingService.instance.info(
+      'Starting stream for conversation $conversationId',
+      category: LogCategory.chat,
+      data: {'messageCount': messages.length, 'providerId': conversationId},
+    );
+
     final conversation = await _conversationRepo.getById(conversationId);
     if (conversation == null) {
       yield ChatStreamEvent.error('Conversation not found');
@@ -242,7 +252,13 @@ class ChatService {
     } on CancellationError {
       // User-initiated cancellation: status is already set by cancelMessage().
       rethrow;
-    } catch (e) {
+    } catch (e, stack) {
+      LoggingService.instance.error(
+        'Stream error for conversation $conversationId',
+        category: LogCategory.chat,
+        error: e,
+        stackTrace: stack,
+      );
       // Ensure the message is marked failed when the stream throws unexpectedly
       // so it does not remain stuck in streaming state (spec §7.2).
       final currentMessage = await _messageRepo.getById(assistantMessageId);
@@ -378,6 +394,9 @@ class ChatService {
   }
 
   ChatProviderAdapter _createAdapter(Provider provider) {
+    if (_testAdapterFactory != null) {
+      return _testAdapterFactory!(provider);
+    }
     return ChatAdapterFactory.createAdapter(
       provider,
       modelRepo: _providerModelRepo,

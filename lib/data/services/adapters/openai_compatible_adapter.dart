@@ -19,9 +19,26 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
       : _dio = dio ?? Dio(),
         _modelRepo = modelRepo;
 
+  /// Enforce HTTPS for non-local endpoints (security requirement).
+  void _enforceHttps(String baseUrl) {
+    final uri = Uri.tryParse(baseUrl);
+    if (uri == null) return;
+    final isLocalhost = uri.host == 'localhost' ||
+        uri.host == '127.0.0.1' ||
+        uri.host == '::1' ||
+        uri.host.endsWith('.local');
+    if (!isLocalhost && uri.scheme != 'https') {
+      throw const SecurityError(
+        'Non-local endpoints must use HTTPS.',
+        code: 'INSECURE_ENDPOINT',
+      );
+    }
+  }
+
   @override
   Future<ProviderValidationResult> validateConfig(Provider provider) async {
     try {
+      _enforceHttps(provider.baseUrl);
       // Try to fetch models endpoint as validation
       final response = await _dio.get(
         '${provider.baseUrl}/models',
@@ -65,6 +82,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
 
   @override
   Future<List<ProviderModel>> fetchModels(Provider provider) async {
+    _enforceHttps(provider.baseUrl);
     // Check cache first if repository is available
     final modelRepo = _modelRepo;
     if (modelRepo != null) {
@@ -129,6 +147,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
 
   @override
   Future<ProviderHealthStatus> healthCheck(Provider provider) async {
+    _enforceHttps(provider.baseUrl);
     try {
       final response = await _dio.get(
         '${provider.baseUrl}/models',
@@ -161,6 +180,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
   @override
   Stream<ChatStreamEvent> streamChat(ChatRequest request, String apiKey,
       {CancelToken? cancelToken}) async* {
+    _enforceHttps(request.baseUrl);
     try {
       final response = await _dio.post<ResponseBody>(
         '${request.baseUrl}/chat/completions',
@@ -260,6 +280,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
     ChatRequest request,
     String apiKey,
   ) async {
+    _enforceHttps(request.baseUrl);
     try {
       final response = await _dio.post(
         '${request.baseUrl}/chat/completions',
