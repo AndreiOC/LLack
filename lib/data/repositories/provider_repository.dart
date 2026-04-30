@@ -219,12 +219,20 @@ class ProviderRepository {
     await _dao.softDelete(id);
   }
 
-  /// Restore soft-deleted provider
-  Future<void> restore(String id) => _dao.restore(id);
+  /// Restore soft-deleted provider and rehydrate any secrets from secure storage.
+  Future<Provider?> restore(String id) async {
+    await _dao.restore(id);
+    final restored = await _dao.getActiveById(id);
+    if (restored == null) {
+      return null;
+    }
+    return _mergeSecretHeaders(restored);
+  }
 
-  /// Permanently delete provider and its API key
+  /// Permanently delete provider and wipe all secrets.
   Future<void> deletePermanently(String id) async {
     await _secureStorage.deleteProviderApiKey(id);
+    await _secureStorage.deleteAllProviderHeaderSecrets(id);
     await _dao.deletePermanently(id);
   }
 

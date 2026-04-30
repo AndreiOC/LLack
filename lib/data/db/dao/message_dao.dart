@@ -5,9 +5,17 @@ import '../../../domain/entities/entities.dart';
 
 /// Data Access Object for Message operations
 class MessageDao {
-  final Database _db;
+  final DatabaseExecutor _db;
 
   MessageDao(this._db);
+
+  Future<T> transaction<T>(Future<T> Function(MessageDao dao) action) async {
+    if (_db is Database) {
+      final database = _db as Database;
+      return database.transaction((txn) => action(MessageDao(txn)));
+    }
+    return action(this);
+  }
 
   /// Get messages for a conversation ordered by sequence.
   /// Excludes superseded messages by default (spec FR-CHT-7).
@@ -207,8 +215,11 @@ class MessageDao {
 
   /// Mark a message and all subsequent messages in the same generation group
   /// as superseded (spec FR-CHT-7).
-  Future<void> supersedeFromMessage(String messageId, String conversationId,
-      int sequenceNo) async {
+  Future<void> supersedeFromMessage(
+    String _messageId,
+    String conversationId,
+    int sequenceNo,
+  ) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _db.update(
       'messages',

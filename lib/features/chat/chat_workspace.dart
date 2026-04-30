@@ -129,7 +129,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
           onRestore: (conversationId) async {
             await ref
                 .read(conversationListProvider.notifier)
-                .restoreConversation(conversationId);
+                .unarchiveConversation(conversationId);
           },
           onRename: (conversationId, newTitle) async {
             await ref
@@ -240,28 +240,28 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
           ),
         );
 
-        if (isWide) {
-          return Scaffold(
-            body: Row(
-              children: <Widget>[
-                SizedBox(width: 320, child: rail),
-                const VerticalDivider(width: 1),
-                Expanded(child: body),
-              ],
-            ),
-          );
-        }
+        final scaffold = isWide
+            ? Scaffold(
+                body: Row(
+                  children: <Widget>[
+                    SizedBox(width: 320, child: rail),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: body),
+                  ],
+                ),
+              )
+            : Scaffold(
+                drawer: Drawer(
+                  child: SafeArea(child: rail),
+                ),
+                body: body,
+              );
 
-        return Scaffold(
-          drawer: Drawer(
-            child: SafeArea(child: rail),
-          ),
-          body: CallbackShortcuts(
-            bindings: _keyboardShortcuts.shortcuts,
-            child: Focus(
-              autofocus: true,
-              child: ConnectivityBanner(child: body),
-            ),
+        return CallbackShortcuts(
+          bindings: _keyboardShortcuts.shortcuts,
+          child: Focus(
+            autofocus: true,
+            child: ConnectivityBanner(child: scaffold),
           ),
         );
       },
@@ -650,6 +650,20 @@ class _ArchivedSectionState extends ConsumerState<_ArchivedSection> {
   }
 
   @override
+  void didUpdateWidget(covariant _ArchivedSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _loadArchived();
+  }
+
+  Future<void> _runArchivedMutation(Future<void> Function() action) async {
+    await action();
+    if (!mounted) {
+      return;
+    }
+    setState(_loadArchived);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
@@ -714,10 +728,14 @@ class _ArchivedSectionState extends ConsumerState<_ArchivedSection> {
                     isSelected: isSelected,
                     isArchived: true,
                     onTap: () => widget.onOpenConversation(conversation.id),
-                    onDelete: () => widget.onDelete(conversation.id),
+                    onDelete: () => _runArchivedMutation(
+                      () => widget.onDelete(conversation.id),
+                    ),
                     onTogglePin: () {},
                     onArchive: () {},
-                    onRestore: () => widget.onRestore(conversation.id),
+                    onRestore: () => _runArchivedMutation(
+                      () => widget.onRestore(conversation.id),
+                    ),
                     onRename: (_) {},
                     onExport: () {},
                   );
@@ -1089,6 +1107,22 @@ class _ChatHeader extends ConsumerWidget {
     final cachedModelsAsync =
         ref.watch(_cachedModelsProvider(selectedProvider.id));
     final recentModels = cachedModelsAsync.valueOrNull ?? const <ProviderModel>[];
+    final dropdownModels = <ProviderModel>[
+      ...recentModels,
+      if (selectedModelId != null &&
+          selectedModelId!.isNotEmpty &&
+          !recentModels.any(
+            (model) => model.remoteModelId == selectedModelId,
+          ))
+        ProviderModel(
+          id: '__selected_${selectedProvider.id}_$selectedModelId',
+          providerId: selectedProvider.id,
+          remoteModelId: selectedModelId!,
+          displayName: selectedModelId!,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        ),
+    ];
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 18, 20, 18),
@@ -1203,14 +1237,14 @@ class _ChatHeader extends ConsumerWidget {
                       value: selectedModelId,
                       isExpanded: true,
                       hint: const Text('Select model'),
-                      items: [
-                        ...recentModels.map(
-                          (model) => DropdownMenuItem<String>(
-                            value: model.remoteModelId,
-                            child: Text(model.displayName),
-                          ),
-                        ),
-                      ],
+                      items: dropdownModels
+                          .map(
+                            (model) => DropdownMenuItem<String>(
+                              value: model.remoteModelId,
+                              child: Text(model.displayName),
+                            ),
+                          )
+                          .toList(),
                       onChanged: (value) async {
                         if (value == null) return;
                         await onModelSelected(value);

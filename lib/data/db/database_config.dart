@@ -7,7 +7,20 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// Database configuration and initialization
 class DatabaseConfig {
   static const String databaseName = 'foss_chat.db';
-  static const int databaseVersion = 4; // Bumped for FTS5 search
+  static const int databaseVersion = 5;
+  static const String _schemaAssetPath =
+      'assets/migrations/001_initial_schema.sql';
+  static const List<String> _dropStatements = <String>[
+    'DROP TABLE IF EXISTS conversations_fts',
+    'DROP TABLE IF EXISTS messages_fts',
+    'DROP TABLE IF EXISTS usage_snapshots',
+    'DROP TABLE IF EXISTS outbox_jobs',
+    'DROP TABLE IF EXISTS messages',
+    'DROP TABLE IF EXISTS conversations',
+    'DROP TABLE IF EXISTS provider_models',
+    'DROP TABLE IF EXISTS providers',
+    'DROP TABLE IF EXISTS app_settings',
+  ];
 
   /// Initialize the database factory for desktop platforms
   static void initialize() {
@@ -32,38 +45,38 @@ class DatabaseConfig {
       _onUpgrade(db, oldVersion, newVersion);
 
   /// Called when database is created for the first time
-  static Future<void> _onCreate(Database db, int version) async {
-    // Execute initial schema migration
-    await _executeMigration(db, '001_initial_schema.sql');
-  }
+  static Future<void> _onCreate(Database db, int version) =>
+      _applyUnifiedSchema(db);
 
   /// Called when database needs to be upgraded
   static Future<void> _onUpgrade(
-      Database db, int oldVersion, int newVersion) async {
-    // Future migrations will be executed here
-    for (int i = oldVersion + 1; i <= newVersion; i++) {
-      final migrationFile = '${i.toString().padLeft(3, '0')}_migration.sql';
-      await _executeMigration(db, migrationFile);
+    Database db,
+    int _oldVersion,
+    int _newVersion,
+  ) async {
+    // Pre-release simplification: old local schemas are disposable, so recreate
+    // the database from the single canonical schema instead of maintaining a
+    // migration chain.
+    await _recreateDatabase(db);
+  }
+
+  static Future<void> _applyUnifiedSchema(Database db) async {
+    final sql = await rootBundle.loadString(_schemaAssetPath);
+    final statements = _splitSqlStatements(sql);
+    for (final statement in statements) {
+      await db.execute(statement);
     }
   }
 
-  /// Execute a SQL migration file.
-  ///
-  /// Migration files can contain triggers whose bodies include semicolons, so
-  /// naive `split(';')` parsing is not safe. We split line-by-line and keep
-  /// trigger bodies intact until `END;`.
-  static Future<void> _executeMigration(Database db, String fileName) async {
+  static Future<void> _recreateDatabase(Database db) async {
+    await db.execute('PRAGMA foreign_keys = OFF');
     try {
-      final sql = await rootBundle.loadString('assets/migrations/$fileName');
-      final statements = _splitSqlStatements(sql);
-      for (final statement in statements) {
+      for (final statement in _dropStatements) {
         await db.execute(statement);
       }
-    } catch (_) {
-      // Fallback: embedded initial schema when assets aren't available
-      if (fileName == '001_initial_schema.sql') {
-        await _executeInitialSchema(db);
-      }
+      await _applyUnifiedSchema(db);
+    } finally {
+      await db.execute('PRAGMA foreign_keys = ON');
     }
   }
 
@@ -105,190 +118,5 @@ class DatabaseConfig {
     }
 
     return statements;
-  }
-
-  /// Execute the initial schema
-  static Future<void> _executeInitialSchema(Database db) async {
-    // App Settings Table
-    await db.execute('''
-      CREATE TABLE app_settings (
-        key TEXT PRIMARY KEY NOT NULL,
-        value_json TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
-
-    // Providers Table
-    await db.execute('''
-      CREATE TABLE providers (
-        id TEXT PRIMARY KEY NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN ('ollama', 'openai_compatible')),
-        display_name TEXT NOT NULL,
-        base_url TEXT NOT NULL,
-        api_key_ref TEXT,
-        default_model_id TEXT,
-        headers_json TEXT,
-        settings_json TEXT,
-        health_status TEXT CHECK (health_status IN ('healthy', 'degraded', 'unreachable', 'never_checked')),
-        health_checked_at INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        deleted_at INTEGER
-      )
-    ''');
-
-    // Provider Models Table
-    await db.execute('''
-      CREATE TABLE provider_models (
-        id TEXT PRIMARY KEY NOT NULL,
-        provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-        remote_model_id TEXT NOT NULL,
-        display_name TEXT NOT NULL,
-        context_window INTEGER,
-        supports_streaming INTEGER NOT NULL DEFAULT 1,
-        supports_tools INTEGER NOT NULL DEFAULT 0,
-        last_used_at INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
-
-    // Conversations Table
-    await db.execute('''
-      CREATE TABLE conversations (
-        id TEXT PRIMARY KEY NOT NULL,
-        title TEXT NOT NULL,
-        selected_provider_id TEXT REFERENCES providers(id),
-        selected_model_id TEXT,
-        pinned_at INTEGER,
-        archived_at INTEGER,
-        deleted_at INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
-
-    // Messages Table
-    await db.execute('''
-      CREATE TABLE messages (
-        id TEXT PRIMARY KEY NOT NULL,
-        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
-        content_markdown TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('draft', 'queued', 'sending', 'streaming', 'completed', 'failed', 'cancelled', 'superseded')),
-        provider_id TEXT REFERENCES providers(id),
-        model_id TEXT,
-        sequence_no INTEGER NOT NULL,
-        edited_from_message_id TEXT REFERENCES messages(id),
-        generation_group_id TEXT,
-        input_tokens INTEGER,
-        output_tokens INTEGER,
-        estimated_cost_micros INTEGER,
-        error_code TEXT,
-        error_message TEXT,
-        response_metadata_json TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
-
-    // Outbox Jobs Table
-    await db.execute('''
-      CREATE TABLE outbox_jobs (
-        id TEXT PRIMARY KEY NOT NULL,
-        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-        provider_id TEXT NOT NULL REFERENCES providers(id),
-        payload_json TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'retry_wait', 'failed', 'completed', 'cancelled')),
-        retry_count INTEGER NOT NULL DEFAULT 0,
-        next_retry_at INTEGER,
-        last_error TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    ''');
-
-    // Indexes
-    await db.execute(
-        'CREATE INDEX idx_conversations_updated_at ON conversations(updated_at DESC)');
-    await db.execute(
-        'CREATE INDEX idx_conversations_deleted_at ON conversations(deleted_at)');
-    await db.execute(
-        'CREATE INDEX idx_conversations_pinned_at ON conversations(pinned_at DESC)');
-    await db.execute(
-        'CREATE INDEX idx_messages_conversation_id_sequence_no ON messages(conversation_id, sequence_no)');
-    await db.execute(
-        'CREATE INDEX idx_messages_generation_group_id ON messages(generation_group_id)');
-    await db.execute(
-        'CREATE INDEX idx_messages_created_at ON messages(created_at)');
-    await db.execute(
-        'CREATE INDEX idx_outbox_jobs_status_next_retry_at ON outbox_jobs(status, next_retry_at)');
-    await db.execute(
-        'CREATE INDEX idx_provider_models_provider_id_last_used_at ON provider_models(provider_id, last_used_at)');
-
-    // Usage Snapshots Table (spec §5.1, §9.6)
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS usage_snapshots (
-        id TEXT PRIMARY KEY NOT NULL,
-        conversation_id TEXT,
-        message_id TEXT,
-        provider_id TEXT,
-        model_id TEXT,
-        period_start INTEGER NOT NULL,
-        period_end INTEGER NOT NULL,
-        period_type TEXT NOT NULL CHECK (period_type IN ('daily', 'weekly', 'monthly')),
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        estimated_cost_micros INTEGER NOT NULL DEFAULT 0,
-        is_local INTEGER NOT NULL DEFAULT 0 CHECK (is_local IN (0, 1)),
-        created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
-      )
-    ''');
-
-    // Usage snapshot indexes
-    await db.execute(
-        'CREATE INDEX idx_usage_snapshots_period ON usage_snapshots(provider_id, period_type, period_start)');
-    await db.execute(
-        'CREATE INDEX idx_usage_snapshots_conversation ON usage_snapshots(conversation_id, created_at)');
-
-    // Auto-update updated_at trigger for messages (safety net — DAOs also set it explicitly)
-    await db.execute('''
-      CREATE TRIGGER IF NOT EXISTS trg_messages_updated_at
-      AFTER UPDATE ON messages
-      FOR EACH ROW
-      WHEN NEW.updated_at = OLD.updated_at
-      BEGIN
-        UPDATE messages SET updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = NEW.id;
-      END
-    ''');
-
-    // Initial app settings
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await db.insert('app_settings', {
-      'key': 'has_completed_onboarding',
-      'value_json': 'false',
-      'updated_at': now
-    });
-    await db.insert('app_settings', {
-      'key': 'skip_cloud_providers',
-      'value_json': 'false',
-      'updated_at': now
-    });
-    await db.insert('app_settings', {
-      'key': 'monthly_spend_threshold',
-      'value_json': 'null',
-      'updated_at': now
-    });
-    await db.insert('app_settings', {
-      'key': 'show_code_line_numbers',
-      'value_json': 'false',
-      'updated_at': now
-    });
-    await db.insert('app_settings', {
-      'key': 'last_successful_ollama_endpoint',
-      'value_json': 'null',
-      'updated_at': now
-    });
   }
 }

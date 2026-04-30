@@ -7,12 +7,12 @@ class ConversationDao {
 
   ConversationDao(this._db);
 
-  /// Get archived conversations (soft-deleted but not purged)
+  /// Get archived conversations.
   Future<List<Conversation>> getArchived() async {
     final maps = await _db.query(
       'conversations',
-      where: 'deleted_at IS NOT NULL',
-      orderBy: 'deleted_at DESC',
+      where: 'deleted_at IS NULL AND archived_at IS NOT NULL',
+      orderBy: 'archived_at DESC',
     );
     return maps.map((m) => Conversation.fromJson(m)).toList();
   }

@@ -1,5 +1,7 @@
--- Initial schema for FOSS Chat
--- Created: 2025-04-17
+-- Unified schema for FOSS Chat.
+-- This file is the single source of truth for fresh installs and pre-release
+-- schema resets. Do not add incremental migration files without updating
+-- DatabaseConfig accordingly.
 
 -- App Settings Table
 CREATE TABLE app_settings (
@@ -58,7 +60,7 @@ CREATE TABLE messages (
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
   content_markdown TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('draft', 'queued', 'sending', 'streaming', 'completed', 'failed', 'cancelled')),
+  status TEXT NOT NULL CHECK (status IN ('draft', 'queued', 'sending', 'streaming', 'completed', 'failed', 'cancelled', 'superseded')),
   provider_id TEXT REFERENCES providers(id),
   model_id TEXT,
   sequence_no INTEGER NOT NULL,
@@ -72,6 +74,19 @@ CREATE TABLE messages (
   response_metadata_json TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
+);
+
+-- FTS5 virtual tables
+CREATE VIRTUAL TABLE conversations_fts USING fts5(
+  title,
+  content='conversations',
+  content_rowid='rowid'
+);
+
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+  content_markdown,
+  content='messages',
+  content_rowid='rowid'
 );
 
 -- Outbox Jobs Table
@@ -121,12 +136,60 @@ CREATE INDEX idx_usage_snapshots_period ON usage_snapshots(provider_id, period_t
 CREATE INDEX idx_usage_snapshots_conversation ON usage_snapshots(conversation_id, created_at);
 
 -- Auto-update updated_at trigger for messages (safety net — DAOs also set it explicitly)
-CREATE TRIGGER IF NOT EXISTS trg_messages_updated_at
+CREATE TRIGGER trg_messages_updated_at
 AFTER UPDATE ON messages
 FOR EACH ROW
 WHEN NEW.updated_at = OLD.updated_at
 BEGIN
   UPDATE messages SET updated_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = NEW.id;
+END;
+
+-- FTS5 sync triggers for conversations
+CREATE TRIGGER trg_conversations_fts_insert
+AFTER INSERT ON conversations
+BEGIN
+  INSERT INTO conversations_fts (rowid, title)
+  VALUES (new.rowid, new.title);
+END;
+
+CREATE TRIGGER trg_conversations_fts_delete
+AFTER DELETE ON conversations
+BEGIN
+  INSERT INTO conversations_fts (conversations_fts, rowid, title)
+  VALUES ('delete', old.rowid, old.title);
+END;
+
+CREATE TRIGGER trg_conversations_fts_update
+AFTER UPDATE OF title ON conversations
+BEGIN
+  INSERT INTO conversations_fts (conversations_fts, rowid, title)
+  VALUES ('delete', old.rowid, old.title);
+  INSERT INTO conversations_fts (rowid, title)
+  VALUES (new.rowid, new.title);
+END;
+
+-- FTS5 sync triggers for messages
+CREATE TRIGGER trg_messages_fts_insert
+AFTER INSERT ON messages
+BEGIN
+  INSERT INTO messages_fts (rowid, content_markdown)
+  VALUES (new.rowid, new.content_markdown);
+END;
+
+CREATE TRIGGER trg_messages_fts_delete
+AFTER DELETE ON messages
+BEGIN
+  INSERT INTO messages_fts (messages_fts, rowid, content_markdown)
+  VALUES ('delete', old.rowid, old.content_markdown);
+END;
+
+CREATE TRIGGER trg_messages_fts_update
+AFTER UPDATE OF content_markdown ON messages
+BEGIN
+  INSERT INTO messages_fts (messages_fts, rowid, content_markdown)
+  VALUES ('delete', old.rowid, old.content_markdown);
+  INSERT INTO messages_fts (rowid, content_markdown)
+  VALUES (new.rowid, new.content_markdown);
 END;
 
 -- Initial app settings
@@ -136,3 +199,10 @@ INSERT INTO app_settings (key, value_json, updated_at) VALUES
   ('monthly_spend_threshold', 'null', strftime('%s', 'now') * 1000),
   ('show_code_line_numbers', 'false', strftime('%s', 'now') * 1000),
   ('last_successful_ollama_endpoint', 'null', strftime('%s', 'now') * 1000);
+
+-- Initial FTS population (no-op on fresh databases, useful after dev resets)
+INSERT INTO conversations_fts (rowid, title)
+SELECT rowid, title FROM conversations WHERE deleted_at IS NULL;
+
+INSERT INTO messages_fts (rowid, content_markdown)
+SELECT rowid, content_markdown FROM messages;

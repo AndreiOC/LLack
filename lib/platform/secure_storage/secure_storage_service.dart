@@ -99,8 +99,14 @@ class SecureStorageService {
 
   /// Delete all stored header secrets for a provider.
   Future<void> deleteAllProviderHeaderSecrets(String providerId) async {
-    // flutter_secure_storage does not support listing keys, so we rely on
-    // the provider repository to track which secret headers exist and delete
-    // them individually.
+    final allEntries = await _storage.readAll();
+    final prefix = 'provider_header_${providerId}_';
+    final matchingKeys = allEntries.keys
+        .where((key) => key.startsWith(prefix))
+        .toList(growable: false);
+
+    for (final key in matchingKeys) {
+      await delete(key);
+    }
   }
 }
