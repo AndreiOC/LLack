@@ -36,7 +36,7 @@ dependencies:
   path_provider: ^2.1.5
   path: ^1.9.1
   uuid: ^4.5.1
-  intl: ^0.19.0
+  intl: ^0.20.2
   
   # UI Components
   smooth_page_indicator: ^1.2.0+3
@@ -44,10 +44,6 @@ dependencies:
   dropdown_button2: ^2.3.9
   flutter_slidable: ^3.1.2
   pull_to_refresh: ^2.0.0
-  
-  # Forms
-  flutter_form_builder: ^9.7.0
-  form_builder_validators: ^11.1.2
   
   # Chat Rendering
   flutter_markdown: ^0.7.6
