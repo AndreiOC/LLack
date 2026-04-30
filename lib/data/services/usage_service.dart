@@ -13,25 +13,37 @@ class UsageMetric {
   final int inputTokens;
   final int outputTokens;
   final int estimatedCostMicros;
+  final int estimatedCostMicrosPortion;
+  final int estimatedMessageCount;
 
   const UsageMetric({
     this.inputTokens = 0,
     this.outputTokens = 0,
     this.estimatedCostMicros = 0,
+    this.estimatedCostMicrosPortion = 0,
+    this.estimatedMessageCount = 0,
   });
 
   int get totalTokens => inputTokens + outputTokens;
   double get estimatedCostDollars => estimatedCostMicros / 1000000;
+  int get actualCostMicros =>
+      estimatedCostMicros - estimatedCostMicrosPortion;
 
   UsageMetric copyWith({
     int? inputTokens,
     int? outputTokens,
     int? estimatedCostMicros,
+    int? estimatedCostMicrosPortion,
+    int? estimatedMessageCount,
   }) {
     return UsageMetric(
       inputTokens: inputTokens ?? this.inputTokens,
       outputTokens: outputTokens ?? this.outputTokens,
       estimatedCostMicros: estimatedCostMicros ?? this.estimatedCostMicros,
+      estimatedCostMicrosPortion:
+          estimatedCostMicrosPortion ?? this.estimatedCostMicrosPortion,
+      estimatedMessageCount:
+          estimatedMessageCount ?? this.estimatedMessageCount,
     );
   }
 }
@@ -101,6 +113,7 @@ class UsageService {
     required int inputTokens,
     required int outputTokens,
     required int estimatedCostMicros,
+    required bool isEstimated,
     DateTime? timestamp,
   }) async {
     final now = timestamp ?? DateTime.now();
@@ -124,6 +137,7 @@ class UsageService {
           inputTokens: inputTokens,
           outputTokens: outputTokens,
           estimatedCostMicros: estimatedCostMicros,
+          isEstimated: isEstimated,
           isLocal: provider.isOllama,
           createdAt: now,
         ),
@@ -219,6 +233,9 @@ class UsageService {
           inputTokens: snapshot.inputTokens,
           outputTokens: snapshot.outputTokens,
           estimatedCostMicros: snapshot.estimatedCostMicros,
+          estimatedCostMicrosPortion:
+              snapshot.isEstimated ? snapshot.estimatedCostMicros : 0,
+          estimatedMessageCount: snapshot.isEstimated ? 1 : 0,
         ),
       );
       aggregates[providerId] = ProviderUsageMetric(
@@ -247,15 +264,23 @@ class UsageService {
     var inputTokens = 0;
     var outputTokens = 0;
     var estimatedCostMicros = 0;
+    var estimatedCostMicrosPortion = 0;
+    var estimatedMessageCount = 0;
     for (final snapshot in snapshots) {
       inputTokens += snapshot.inputTokens;
       outputTokens += snapshot.outputTokens;
       estimatedCostMicros += snapshot.estimatedCostMicros;
+      if (snapshot.isEstimated) {
+        estimatedCostMicrosPortion += snapshot.estimatedCostMicros;
+        estimatedMessageCount += 1;
+      }
     }
     return UsageMetric(
       inputTokens: inputTokens,
       outputTokens: outputTokens,
       estimatedCostMicros: estimatedCostMicros,
+      estimatedCostMicrosPortion: estimatedCostMicrosPortion,
+      estimatedMessageCount: estimatedMessageCount,
     );
   }
 
@@ -264,6 +289,10 @@ class UsageService {
       inputTokens: left.inputTokens + right.inputTokens,
       outputTokens: left.outputTokens + right.outputTokens,
       estimatedCostMicros: left.estimatedCostMicros + right.estimatedCostMicros,
+      estimatedCostMicrosPortion:
+          left.estimatedCostMicrosPortion + right.estimatedCostMicrosPortion,
+      estimatedMessageCount:
+          left.estimatedMessageCount + right.estimatedMessageCount,
     );
   }
 

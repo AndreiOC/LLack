@@ -128,30 +128,97 @@ class _CodeBlockWidgetState extends State<_CodeBlockWidget> {
   }
 
   Widget _buildCodeBody() {
-    if (widget.language.isNotEmpty) {
-      return HighlightView(
-        widget.code,
-        language: widget.language,
-        theme: githubTheme,
-        padding: const EdgeInsets.all(16),
-        textStyle: const TextStyle(
-          fontFamily: 'monospace',
-          fontSize: 13,
-          height: 1.5,
-        ),
-      );
+    final codeTextStyle = const TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 13,
+      height: 1.5,
+    );
+    final codeChild = widget.language.isNotEmpty
+        ? HighlightView(
+            widget.code,
+            language: widget.language,
+            theme: githubTheme,
+            padding: EdgeInsets.fromLTRB(
+              widget.showLineNumbers ? 12 : 16,
+              16,
+              16,
+              16,
+            ),
+            textStyle: codeTextStyle,
+          )
+        : Padding(
+            padding: EdgeInsets.fromLTRB(
+              widget.showLineNumbers ? 12 : 16,
+              16,
+              16,
+              16,
+            ),
+            child: Text(
+              widget.code,
+              style: codeTextStyle,
+            ),
+          );
+
+    if (!widget.showLineNumbers) {
+      return codeChild;
     }
 
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Text(
-        widget.code,
-        style: const TextStyle(
-          fontFamily: 'monospace',
-          fontSize: 13,
-          height: 1.5,
+    final lines = widget.code.split('\n');
+    if (widget.language.isNotEmpty) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 16, 10, 16),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF0EEE9),
+              border: Border(
+                right: BorderSide(color: Color(0xFFE0E0E0)),
+              ),
+            ),
+            child: Text(
+              _buildLineNumberText(lines.length),
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+                height: 1.5,
+                color: Color(0xFF8A8178),
+              ),
+            ),
+          ),
+          codeChild,
+        ],
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 16, 10, 16),
+          decoration: const BoxDecoration(
+            color: Color(0xFFF0EEE9),
+            border: Border(
+              right: BorderSide(color: Color(0xFFE0E0E0)),
+            ),
+          ),
+          child: Text(
+            _buildLineNumberText(lines.length),
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12,
+              height: 1.5,
+              color: Color(0xFF8A8178),
+            ),
+          ),
         ),
-      ),
+        codeChild,
+      ],
     );
+  }
+
+  String _buildLineNumberText(int lineCount) {
+    return List<String>.generate(lineCount, (index) => '${index + 1}').join('\n');
   }
 }

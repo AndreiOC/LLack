@@ -109,11 +109,24 @@ class ConversationRepository {
 
   /// Search by title (uses FTS5 when available).
   Future<List<Conversation>> search(String query) async {
+    final results = await searchDetailed(query);
+    return results.map((result) => result.conversation).toList();
+  }
+
+  /// Search conversations and preserve snippets/highlights for the UI.
+  Future<List<ConversationSearchResult>> searchDetailed(String query) async {
     if (_searchDao != null) {
-      final results = await _searchDao!.searchAll(query);
-      return results.map((r) => r.conversation).toList();
+      return _searchDao!.searchAll(query);
     }
-    return _dao.searchByTitle(query);
+    final conversations = await _dao.searchByTitle(query);
+    return conversations
+        .map(
+          (conversation) => ConversationSearchResult(
+            conversation: conversation,
+            snippet: conversation.title,
+          ),
+        )
+        .toList();
   }
 
   /// Get active count

@@ -11,22 +11,33 @@ final conversationListProvider = AutoDisposeAsyncNotifierProvider<
 
 class ConversationListState {
   final List<Conversation> conversations;
+  final Map<String, String> snippetsByConversationId;
+  final String searchQuery;
   final bool hasMore;
   final bool isLoadingMore;
 
   const ConversationListState({
     required this.conversations,
+    this.snippetsByConversationId = const <String, String>{},
+    this.searchQuery = '',
     required this.hasMore,
     this.isLoadingMore = false,
   });
 
+  bool get isSearching => searchQuery.isNotEmpty;
+
   ConversationListState copyWith({
     List<Conversation>? conversations,
+    Map<String, String>? snippetsByConversationId,
+    String? searchQuery,
     bool? hasMore,
     bool? isLoadingMore,
   }) {
     return ConversationListState(
       conversations: conversations ?? this.conversations,
+      snippetsByConversationId:
+          snippetsByConversationId ?? this.snippetsByConversationId,
+      searchQuery: searchQuery ?? this.searchQuery,
       hasMore: hasMore ?? this.hasMore,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
     );
@@ -47,6 +58,7 @@ class ConversationListNotifier
     );
     return ConversationListState(
       conversations: conversations,
+      searchQuery: '',
       hasMore: conversations.length == _pageSize,
     );
   }
@@ -59,6 +71,7 @@ class ConversationListNotifier
     );
     state = AsyncData(ConversationListState(
       conversations: conversations,
+      searchQuery: '',
       hasMore: conversations.length == _pageSize,
     ));
   }
@@ -70,6 +83,7 @@ class ConversationListNotifier
     );
     state = AsyncData(ConversationListState(
       conversations: conversations,
+      searchQuery: '',
       hasMore: conversations.length == _pageSize,
     ));
   }
@@ -88,6 +102,8 @@ class ConversationListNotifier
       final all = [...current.conversations, ...nextConversations];
       state = AsyncData(ConversationListState(
         conversations: all,
+        searchQuery: current.searchQuery,
+        snippetsByConversationId: current.snippetsByConversationId,
         hasMore: nextConversations.length == _pageSize,
         isLoadingMore: false,
       ));
@@ -104,7 +120,7 @@ class ConversationListNotifier
 
     try {
       await _conversationRepo.delete(id);
-      await refresh();
+      await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -113,7 +129,7 @@ class ConversationListNotifier
   Future<void> restoreConversation(String id) async {
     try {
       await _conversationRepo.restore(id);
-      await refresh();
+      await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -122,7 +138,7 @@ class ConversationListNotifier
   Future<void> unarchiveConversation(String id) async {
     try {
       await _conversationRepo.unarchive(id);
-      await refresh();
+      await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -133,7 +149,7 @@ class ConversationListNotifier
 
     try {
       await _conversationRepo.togglePin(id);
-      await refresh();
+      await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       if (previous != null) {
         state = AsyncData(previous);
@@ -150,7 +166,7 @@ class ConversationListNotifier
 
     try {
       await _conversationRepo.archive(id);
-      await refresh();
+      await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -159,7 +175,7 @@ class ConversationListNotifier
   Future<void> rename(String id, String newTitle) async {
     try {
       await _conversationRepo.updateTitle(id, newTitle);
-      await refresh();
+      await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
     }
@@ -174,11 +190,28 @@ class ConversationListNotifier
       await refresh();
       return;
     }
-    state = const AsyncLoading<ConversationListState>();
-    final results = await _conversationRepo.search(query.trim());
-    state = AsyncData(ConversationListState(
-      conversations: results,
-      hasMore: false,
-    ));
+    try {
+      final trimmed = query.trim();
+      final results = await _conversationRepo.searchDetailed(trimmed);
+      state = AsyncData(ConversationListState(
+        conversations: results.map((result) => result.conversation).toList(),
+        snippetsByConversationId: <String, String>{
+          for (final result in results) result.conversation.id: result.snippet,
+        },
+        searchQuery: trimmed,
+        hasMore: false,
+      ));
+    } catch (error, stackTrace) {
+      state = AsyncError(error, stackTrace);
+    }
+  }
+
+  Future<void> _reloadPreservingQuery() async {
+    final query = state.valueOrNull?.searchQuery ?? '';
+    if (query.isNotEmpty) {
+      await search(query);
+      return;
+    }
+    await refresh();
   }
 }

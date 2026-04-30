@@ -185,7 +185,7 @@ void main() {
       }
     });
 
-    testWidgets('Queue while offline -> retry when online', (tester) async {
+    testWidgets('Message send flow keeps user content visible', (tester) async {
       await pumpApp(tester, testAdapterFactory: (provider) {
         return MockChatProviderAdapter(
           shouldSucceed: true,

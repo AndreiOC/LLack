@@ -209,6 +209,7 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
       }
 
       Map<String, dynamic>? finalMetadata;
+      var pendingLine = '';
 
       await for (final chunk in stream.map((bytes) => utf8.decode(bytes))) {
         // Check cancellation between chunks
@@ -216,52 +217,39 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
           throw const CancellationError();
         }
 
-        final lines = chunk.split('\n').where((l) => l.trim().isNotEmpty);
+        pendingLine += chunk;
+        final lines = pendingLine.split('\n');
+        pendingLine = lines.removeLast();
 
         for (final line in lines) {
-          // Skip "data: " prefix and "[DONE]" marker
-          if (!line.startsWith('data: ')) continue;
-
-          final jsonStr = line.substring(6).trim();
-          if (jsonStr == '[DONE]') {
+          final parsed = _parseStreamLine(line);
+          if (parsed == null) {
+            continue;
+          }
+          if (parsed.metadata != null) {
+            finalMetadata = parsed.metadata;
+          }
+          if (parsed.delta != null) {
+            yield ChatStreamEvent.delta(parsed.delta!);
+          }
+          if (parsed.isDone) {
             yield ChatStreamEvent.done(metadata: finalMetadata);
             return;
           }
+        }
+      }
 
-          try {
-            final data = jsonDecode(jsonStr) as Map<String, dynamic>;
-
-            // Extract usage from final chunk if available
-            final usage = data['usage'] as Map<String, dynamic>?;
-            if (usage != null) {
-              finalMetadata = {
-                'prompt_tokens': usage['prompt_tokens'],
-                'completion_tokens': usage['completion_tokens'],
-                'total_tokens': usage['total_tokens'],
-              };
-            }
-
-            final choices = data['choices'] as List<dynamic>?;
-            if (choices != null && choices.isNotEmpty) {
-              final delta = choices[0]['delta'] as Map<String, dynamic>?;
-              final content = delta?['content'] as String?;
-
-              if (content != null && content.isNotEmpty) {
-                yield ChatStreamEvent.delta(content);
-              }
-            }
-          } on FormatException catch (e) {
-            // Malformed SSE data — report as parse error per spec §7.4
-            throw StreamParseError(
-              'Malformed response from provider',
-              code: 'STREAM_PARSE_ERROR',
-              originalError: e,
-              rawChunk: line,
-            );
-          } catch (e) {
-            // Skip other malformed lines
-            continue;
-          }
+      if (pendingLine.trim().isNotEmpty) {
+        final parsed = _parseStreamLine(pendingLine);
+        if (parsed?.metadata != null) {
+          finalMetadata = parsed!.metadata;
+        }
+        if (parsed?.delta != null) {
+          yield ChatStreamEvent.delta(parsed!.delta!);
+        }
+        if (parsed?.isDone == true) {
+          yield ChatStreamEvent.done(metadata: finalMetadata);
+          return;
         }
       }
     } on DioException catch (e) {
@@ -472,4 +460,82 @@ class OpenAiCompatibleAdapter implements ChatProviderAdapter {
 
     return null;
   }
+
+  _ParsedOpenAiStreamLine? _parseStreamLine(String line) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+
+    final isSseDataLine = trimmed.startsWith('data:');
+    if (!isSseDataLine &&
+        !trimmed.startsWith('{') &&
+        !trimmed.startsWith('[')) {
+      return null;
+    }
+
+    final payload = isSseDataLine
+        ? trimmed.substring(5).trimLeft()
+        : trimmed;
+    if (payload.isEmpty) {
+      return null;
+    }
+    if (payload == '[DONE]') {
+      return const _ParsedOpenAiStreamLine(isDone: true);
+    }
+
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      return _ParsedOpenAiStreamLine(
+        delta: _extractStreamDelta(data),
+        metadata: _extractStreamMetadata(data),
+      );
+    } on FormatException catch (e) {
+      throw StreamParseError(
+        'Malformed response from provider',
+        code: 'STREAM_PARSE_ERROR',
+        originalError: e,
+        rawChunk: line,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _extractStreamDelta(Map<String, dynamic> data) {
+    final choices = data['choices'] as List<dynamic>?;
+    if (choices == null || choices.isEmpty) {
+      return null;
+    }
+    final delta = choices.first['delta'] as Map<String, dynamic>?;
+    final content = delta?['content'] as String?;
+    if (content == null || content.isEmpty) {
+      return null;
+    }
+    return content;
+  }
+
+  Map<String, dynamic>? _extractStreamMetadata(Map<String, dynamic> data) {
+    final usage = data['usage'] as Map<String, dynamic>?;
+    if (usage == null) {
+      return null;
+    }
+    return <String, dynamic>{
+      'prompt_tokens': usage['prompt_tokens'],
+      'completion_tokens': usage['completion_tokens'],
+      'total_tokens': usage['total_tokens'],
+    };
+  }
+}
+
+class _ParsedOpenAiStreamLine {
+  final String? delta;
+  final Map<String, dynamic>? metadata;
+  final bool isDone;
+
+  const _ParsedOpenAiStreamLine({
+    this.delta,
+    this.metadata,
+    this.isDone = false,
+  });
 }

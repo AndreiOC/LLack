@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' hide Provider;
@@ -204,6 +206,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                         builder: (context) => const SettingsScreen(),
                       ),
                     );
+                    ref.invalidate(_showCodeLineNumbersProvider);
                   },
                   onOpenProviderManagement: _openProviderManagement,
                   onDismissUsageBanner: _dismissUsageBanner,
@@ -417,17 +420,51 @@ class _ConversationRail extends ConsumerStatefulWidget {
 
 class _ConversationRailState extends ConsumerState<_ConversationRail> {
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  Timer? _searchDebounce;
   bool _isSearching = false;
   bool _showArchived = false;
 
   @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleRailScroll);
+  }
+
+  @override
   void dispose() {
+    _searchDebounce?.cancel();
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _performSearch(String query) async {
     await ref.read(conversationListProvider.notifier).search(query);
+  }
+
+  void _handleRailScroll() {
+    if (!_scrollController.hasClients ||
+        _scrollController.position.extentAfter > 220) {
+      return;
+    }
+
+    final listState = ref.read(conversationListProvider).valueOrNull;
+    if (listState == null ||
+        listState.isSearching ||
+        !listState.hasMore ||
+        listState.isLoadingMore) {
+      return;
+    }
+
+    unawaited(ref.read(conversationListProvider.notifier).loadMore());
+  }
+
+  void _scheduleSearch(String value) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      unawaited(_performSearch(value));
+    });
   }
 
   @override
@@ -483,8 +520,9 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
                     ? IconButton(
                         icon: const Icon(Icons.clear, color: Color(0xFFCFBCA8)),
                         onPressed: () {
+                          _searchDebounce?.cancel();
                           _searchController.clear();
-                          _performSearch('');
+                          unawaited(_performSearch(''));
                           setState(() => _isSearching = false);
                         },
                       )
@@ -499,7 +537,7 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
               ),
               onChanged: (value) {
                 setState(() => _isSearching = value.isNotEmpty);
-                _performSearch(value);
+                _scheduleSearch(value);
               },
             ),
             const SizedBox(height: 18),
@@ -507,10 +545,15 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
               child: widget.conversationsAsync.when(
                 data: (listState) {
                   final conversations = listState.conversations;
+                  final showArchivedToggle =
+                      !_showArchived && !listState.isSearching;
+                  final extraItems =
+                      (listState.isLoadingMore ? 1 : 0) +
+                          (showArchivedToggle ? 1 : 0);
                   if (conversations.isEmpty && !_showArchived) {
                     return Center(
                       child: Text(
-                        _isSearching
+                        listState.isSearching || _isSearching
                             ? 'No matches found.'
                             : 'No conversations yet.\nStart a new thread to begin.',
                         textAlign: TextAlign.center,
@@ -523,6 +566,7 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
 
                   return RefreshIndicator(
                     onRefresh: () async {
+                      _searchDebounce?.cancel();
                       _searchController.clear();
                       setState(() => _isSearching = false);
                       await ref
@@ -530,30 +574,59 @@ class _ConversationRailState extends ConsumerState<_ConversationRail> {
                           .refresh();
                     },
                     child: ListView.separated(
+                      controller: _scrollController,
                       physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: conversations.length + (_showArchived ? 0 : 1),
+                      itemCount: conversations.length + extraItems,
                       separatorBuilder: (_, __) => const SizedBox(height: 10),
                       itemBuilder: (context, index) {
-                        if (!_showArchived && index == conversations.length) {
+                        if (index < conversations.length) {
+                          final conversation = conversations[index];
+                          final isSelected =
+                              conversation.id == widget.selectedConversationId;
+                          return _ConversationTile(
+                            conversation: conversation,
+                            snippet:
+                                listState.snippetsByConversationId[conversation.id],
+                            isSelected: isSelected,
+                            onTap: () =>
+                                widget.onOpenConversation(conversation.id),
+                            onDelete: () =>
+                                widget.onDeleteConversation(conversation.id),
+                            onTogglePin: () =>
+                                widget.onTogglePin(conversation.id),
+                            onArchive: () => widget.onArchive(conversation.id),
+                            onRestore: () {},
+                            onRename: (newTitle) =>
+                                widget.onRename(conversation.id, newTitle),
+                            onExport: () => widget.onExport(conversation),
+                          );
+                        }
+
+                        var footerIndex = index - conversations.length;
+                        if (listState.isLoadingMore && footerIndex == 0) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Center(
+                              child: SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+                        if (listState.isLoadingMore) {
+                          footerIndex -= 1;
+                        }
+                        if (showArchivedToggle && footerIndex == 0) {
                           return _ArchivedToggle(
                             showArchived: _showArchived,
                             onToggle: () => setState(() => _showArchived = true),
                           );
                         }
-                        final conversation = conversations[index];
-                        final isSelected =
-                            conversation.id == widget.selectedConversationId;
-                        return _ConversationTile(
-                          conversation: conversation,
-                          isSelected: isSelected,
-                          onTap: () => widget.onOpenConversation(conversation.id),
-                          onDelete: () => widget.onDeleteConversation(conversation.id),
-                          onTogglePin: () => widget.onTogglePin(conversation.id),
-                          onArchive: () => widget.onArchive(conversation.id),
-                          onRestore: () {},
-                          onRename: (newTitle) => widget.onRename(conversation.id, newTitle),
-                          onExport: () => widget.onExport(conversation),
-                        );
+                        return const SizedBox.shrink();
                       },
                     ),
                   );
@@ -751,6 +824,7 @@ class _ArchivedSectionState extends ConsumerState<_ArchivedSection> {
 
 class _ConversationTile extends StatelessWidget {
   final Conversation conversation;
+  final String? snippet;
   final bool isSelected;
   final bool isArchived;
   final VoidCallback onTap;
@@ -763,6 +837,7 @@ class _ConversationTile extends StatelessWidget {
 
   const _ConversationTile({
     required this.conversation,
+    this.snippet,
     required this.isSelected,
     this.isArchived = false,
     required this.onTap,
@@ -815,6 +890,16 @@ class _ConversationTile extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    if ((snippet ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      _ConversationSnippetText(
+                        snippet: snippet!,
+                        textStyle: theme.textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFFE8DACB),
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Text(
                       dateFormat.format(conversation.updatedAt),
@@ -928,6 +1013,56 @@ class _ConversationTile extends StatelessWidget {
   }
 }
 
+class _ConversationSnippetText extends StatelessWidget {
+  final String snippet;
+  final TextStyle? textStyle;
+
+  const _ConversationSnippetText({
+    required this.snippet,
+    required this.textStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final matches = RegExp(r'<mark>(.*?)</mark>').allMatches(snippet);
+    if (matches.isEmpty) {
+      return Text(
+        snippet,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: textStyle,
+      );
+    }
+
+    final spans = <TextSpan>[];
+    var start = 0;
+    for (final match in matches) {
+      if (match.start > start) {
+        spans.add(TextSpan(text: snippet.substring(start, match.start)));
+      }
+      spans.add(
+        TextSpan(
+          text: match.group(1),
+          style: textStyle?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+      start = match.end;
+    }
+    if (start < snippet.length) {
+      spans.add(TextSpan(text: snippet.substring(start)));
+    }
+
+    return Text.rich(
+      TextSpan(style: textStyle, children: spans),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
 enum _ConversationAction { pin, rename, export, archive, restore, delete }
 
 class _ChatPanel extends StatelessWidget {
@@ -1018,6 +1153,7 @@ class _ChatPanel extends StatelessWidget {
               ? _EmptyConversationState(selectedProvider: selectedProvider)
               : _MessageList(
                   messages: chatState.messages,
+                  providers: providers,
                   scrollController: scrollController,
                   onRetryMessage: onRetryMessage,
                   onDeleteMessage: onDeleteMessage,
@@ -1196,31 +1332,10 @@ class _ChatHeader extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFFE6D7C8)),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: selectedProvider.id,
-                      isExpanded: true,
-                      items: providers
-                          .map(
-                            (provider) => DropdownMenuItem<String>(
-                              value: provider.id,
-                              child: Text(provider.displayName),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) async {
-                        if (value == null) {
-                          return;
-                        }
-                        final provider = providers.firstWhere(
-                          (candidate) => candidate.id == value,
-                        );
-                        await onProviderSelected(provider);
-                      },
-                    ),
-                  ),
+                child: _ProviderPickerField(
+                  selectedProvider: selectedProvider,
+                  providers: providers,
+                  onSelected: onProviderSelected,
                 ),
               );
 
@@ -1317,6 +1432,302 @@ class _ChatHeader extends ConsumerWidget {
   }
 }
 
+class _ProviderPickerField extends StatelessWidget {
+  final Provider selectedProvider;
+  final List<Provider> providers;
+  final Future<void> Function(Provider provider) onSelected;
+
+  const _ProviderPickerField({
+    required this.selectedProvider,
+    required this.providers,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _showPicker(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                _providerStatusIcon(selectedProvider),
+                size: 18,
+                color: _providerStatusColor(selectedProvider),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
+                      selectedProvider.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      _providerStatusLabel(selectedProvider),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF6B5A4A),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.expand_more_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showPicker(BuildContext context) async {
+    final result = await showModalBottomSheet<Provider>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _ProviderPickerSheet(
+        selectedProviderId: selectedProvider.id,
+        providers: providers,
+      ),
+    );
+    if (result == null || result.id == selectedProvider.id) {
+      return;
+    }
+    await onSelected(result);
+  }
+}
+
+class _ProviderPickerSheet extends StatefulWidget {
+  final String selectedProviderId;
+  final List<Provider> providers;
+
+  const _ProviderPickerSheet({
+    required this.selectedProviderId,
+    required this.providers,
+  });
+
+  @override
+  State<_ProviderPickerSheet> createState() => _ProviderPickerSheetState();
+}
+
+class _ProviderPickerSheetState extends State<_ProviderPickerSheet> {
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final filteredProviders = _filterProviders(widget.providers, _query);
+    final availableProviders = filteredProviders
+        .where(_isProviderAvailable)
+        .toList()
+      ..sort(_compareProviders);
+    final unavailableProviders = filteredProviders
+        .where((provider) => !_isProviderAvailable(provider))
+        .toList()
+      ..sort(_compareProviders);
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 8,
+          bottom: 24 + MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              'Choose provider',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _searchController,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'Search providers',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _query = '');
+                        },
+                        icon: const Icon(Icons.clear_rounded),
+                      ),
+              ),
+              onChanged: (value) => setState(() => _query = value.trim()),
+            ),
+            const SizedBox(height: 16),
+            Flexible(
+              child: filteredProviders.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No providers match this search.',
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    )
+                  : ListView(
+                      shrinkWrap: true,
+                      children: <Widget>[
+                        if (availableProviders.isNotEmpty)
+                          _ProviderPickerSection(
+                            label: 'Available',
+                            selectedProviderId: widget.selectedProviderId,
+                            providers: availableProviders,
+                          ),
+                        if (unavailableProviders.isNotEmpty)
+                          _ProviderPickerSection(
+                            label: 'Unavailable',
+                            selectedProviderId: widget.selectedProviderId,
+                            providers: unavailableProviders,
+                          ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProviderPickerSection extends StatelessWidget {
+  final String label;
+  final String selectedProviderId;
+  final List<Provider> providers;
+
+  const _ProviderPickerSection({
+    required this.label,
+    required this.selectedProviderId,
+    required this.providers,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: const Color(0xFF6B5A4A),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        ...providers.map((provider) {
+          final isSelected = provider.id == selectedProviderId;
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              _providerStatusIcon(provider),
+              color: _providerStatusColor(provider),
+            ),
+            title: Text(provider.displayName),
+            subtitle: Text(_providerStatusLabel(provider)),
+            trailing: isSelected
+                ? const Icon(Icons.check_rounded)
+                : (!_isProviderAvailable(provider)
+                    ? const Icon(Icons.warning_amber_rounded)
+                    : null),
+            onTap: () => Navigator.of(context).pop(provider),
+          );
+        }),
+        const SizedBox(height: 12),
+      ],
+    );
+  }
+}
+
+List<Provider> _filterProviders(List<Provider> providers, String query) {
+  if (query.isEmpty) {
+    return providers;
+  }
+  final normalizedQuery = query.toLowerCase();
+  return providers.where((provider) {
+    return provider.displayName.toLowerCase().contains(normalizedQuery) ||
+        provider.baseUrl.toLowerCase().contains(normalizedQuery);
+  }).toList();
+}
+
+bool _isProviderAvailable(Provider provider) {
+  final healthStatus = provider.healthStatus;
+  return healthStatus == null ||
+      healthStatus == ProviderHealthStatus.healthy ||
+      healthStatus == ProviderHealthStatus.neverChecked;
+}
+
+int _compareProviders(Provider left, Provider right) {
+  final leftRank = _isProviderAvailable(left) ? 0 : 1;
+  final rightRank = _isProviderAvailable(right) ? 0 : 1;
+  if (leftRank != rightRank) {
+    return leftRank.compareTo(rightRank);
+  }
+  return left.displayName.toLowerCase().compareTo(
+        right.displayName.toLowerCase(),
+      );
+}
+
+String _providerStatusLabel(Provider provider) {
+  final status = switch (provider.healthStatus) {
+    ProviderHealthStatus.healthy => 'Healthy',
+    ProviderHealthStatus.degraded => 'Degraded',
+    ProviderHealthStatus.unreachable => 'Unreachable',
+    ProviderHealthStatus.neverChecked => 'Not checked',
+    null => 'Not checked',
+  };
+  return '$status · ${provider.baseUrl}';
+}
+
+IconData _providerStatusIcon(Provider provider) {
+  return switch (provider.healthStatus) {
+    ProviderHealthStatus.healthy => Icons.check_circle_outline_rounded,
+    ProviderHealthStatus.degraded => Icons.error_outline_rounded,
+    ProviderHealthStatus.unreachable => Icons.cloud_off_rounded,
+    ProviderHealthStatus.neverChecked => Icons.help_outline_rounded,
+    null => Icons.help_outline_rounded,
+  };
+}
+
+Color _providerStatusColor(Provider provider) {
+  return switch (provider.healthStatus) {
+    ProviderHealthStatus.healthy => const Color(0xFF3A6B35),
+    ProviderHealthStatus.degraded => const Color(0xFFB36A0B),
+    ProviderHealthStatus.unreachable => const Color(0xFF9A3B2E),
+    ProviderHealthStatus.neverChecked => const Color(0xFF6B5A4A),
+    null => const Color(0xFF6B5A4A),
+  };
+}
+
 /// Riverpod provider for cached models of a specific provider.
 final _cachedModelsProvider =
     FutureProvider.family<List<ProviderModel>, String>(
@@ -1325,6 +1736,11 @@ final _cachedModelsProvider =
     return repo.getByProviderId(providerId);
   },
 );
+
+final _showCodeLineNumbersProvider = FutureProvider<bool>((ref) async {
+  final dao = await ref.watch(appSettingDaoProvider.future);
+  return dao.getBool(AppSettingKeys.showCodeLineNumbers, false);
+});
 
 class _UsageBanner extends StatelessWidget {
   static final NumberFormat _currencyFormat =
@@ -1413,7 +1829,7 @@ class _UsageBanner extends StatelessWidget {
   }
 }
 
-class _MessageBubble extends StatelessWidget {
+class _MessageBubble extends ConsumerWidget {
   final Message message;
   final VoidCallback? onRetry;
   final VoidCallback onDelete;
@@ -1427,8 +1843,10 @@ class _MessageBubble extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final showLineNumbers =
+        ref.watch(_showCodeLineNumbersProvider).valueOrNull ?? false;
     final isUser = message.isUser;
     final bubbleColor = isUser ? const Color(0xFFB85C38) : Colors.white;
     final foregroundColor = isUser ? Colors.white : const Color(0xFF2B1D12);
@@ -1506,7 +1924,9 @@ class _MessageBubble extends StatelessWidget {
                       ),
                     ),
                     builders: {
-                      'code': CodeBlockBuilder(),
+                      'code': CodeBlockBuilder(
+                        showLineNumbers: showLineNumbers,
+                      ),
                     },
                   ),
                 ],
@@ -1599,8 +2019,9 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class _MessageList extends StatelessWidget {
+class _MessageList extends ConsumerWidget {
   final List<Message> messages;
+  final List<Provider> providers;
   final ScrollController scrollController;
   final Future<void> Function(String messageId) onRetryMessage;
   final Future<void> Function(String messageId) onDeleteMessage;
@@ -1608,6 +2029,7 @@ class _MessageList extends StatelessWidget {
 
   const _MessageList({
     required this.messages,
+    required this.providers,
     required this.scrollController,
     required this.onRetryMessage,
     required this.onDeleteMessage,
@@ -1615,7 +2037,26 @@ class _MessageList extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final providerNames = <String, String>{
+      for (final provider in providers) provider.id: provider.displayName,
+    };
+    final modelDisplayNames = <String, String>{};
+    final messageProviderIds = messages
+        .map((message) => message.providerId)
+        .whereType<String>()
+        .toSet()
+        .toList()
+      ..sort();
+    for (final providerId in messageProviderIds) {
+      final models = ref.watch(_cachedModelsProvider(providerId)).valueOrNull ??
+          const <ProviderModel>[];
+      for (final model in models) {
+        modelDisplayNames['$providerId::${model.remoteModelId}'] =
+            model.displayName;
+      }
+    }
+
     // Build items including provider/model switch dividers (spec FR-SWT-4)
     final items = <Widget>[];
     for (int i = 0; i < messages.length; i++) {
@@ -1628,6 +2069,24 @@ class _MessageList extends StatelessWidget {
             previousModelId: previous.modelId,
             currentProviderId: message.providerId,
             currentModelId: message.modelId,
+            previousProviderDisplayName: _resolveProviderDisplayName(
+              previous.providerId,
+              providerNames,
+            ),
+            previousModelDisplayName: _resolveModelDisplayName(
+              previous.providerId,
+              previous.modelId,
+              modelDisplayNames,
+            ),
+            currentProviderDisplayName: _resolveProviderDisplayName(
+              message.providerId,
+              providerNames,
+            ),
+            currentModelDisplayName: _resolveModelDisplayName(
+              message.providerId,
+              message.modelId,
+              modelDisplayNames,
+            ),
           ));
         }
         items.add(const SizedBox(height: 16));
@@ -1659,6 +2118,30 @@ class _MessageList extends StatelessWidget {
     return previous.providerId != current.providerId ||
         previous.modelId != current.modelId;
   }
+
+  String? _resolveProviderDisplayName(
+    String? providerId,
+    Map<String, String> providerNames,
+  ) {
+    if (providerId == null || providerId.isEmpty) {
+      return null;
+    }
+    return providerNames[providerId] ?? providerId;
+  }
+
+  String? _resolveModelDisplayName(
+    String? providerId,
+    String? modelId,
+    Map<String, String> modelDisplayNames,
+  ) {
+    if (modelId == null || modelId.isEmpty) {
+      return null;
+    }
+    if (providerId == null || providerId.isEmpty) {
+      return modelId;
+    }
+    return modelDisplayNames['$providerId::$modelId'] ?? modelId;
+  }
 }
 
 class _ModelSwitchDivider extends StatelessWidget {
@@ -1666,12 +2149,20 @@ class _ModelSwitchDivider extends StatelessWidget {
   final String? previousModelId;
   final String? currentProviderId;
   final String? currentModelId;
+  final String? previousProviderDisplayName;
+  final String? previousModelDisplayName;
+  final String? currentProviderDisplayName;
+  final String? currentModelDisplayName;
 
   const _ModelSwitchDivider({
     this.previousProviderId,
     this.previousModelId,
     required this.currentProviderId,
     required this.currentModelId,
+    this.previousProviderDisplayName,
+    this.previousModelDisplayName,
+    this.currentProviderDisplayName,
+    this.currentModelDisplayName,
   });
 
   @override
@@ -1679,10 +2170,10 @@ class _ModelSwitchDivider extends StatelessWidget {
     final theme = Theme.of(context);
     final parts = <String>[];
     if (currentProviderId != null && currentProviderId != previousProviderId) {
-      parts.add(currentProviderId!);
+      parts.add(currentProviderDisplayName ?? currentProviderId!);
     }
     if (currentModelId != null && currentModelId != previousModelId) {
-      parts.add(currentModelId!);
+      parts.add(currentModelDisplayName ?? currentModelId!);
     }
     if (parts.isEmpty) return const SizedBox.shrink();
 

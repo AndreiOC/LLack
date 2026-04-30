@@ -15,6 +15,7 @@ class Message {
   final int? inputTokens;
   final int? outputTokens;
   final int? estimatedCostMicros;
+  final bool isEstimated;
   final String? errorCode;
   final String? errorMessage;
   final Map<String, dynamic>? responseMetadata;
@@ -35,6 +36,7 @@ class Message {
     this.inputTokens,
     this.outputTokens,
     this.estimatedCostMicros,
+    this.isEstimated = false,
     this.errorCode,
     this.errorMessage,
     this.responseMetadata,
@@ -62,6 +64,8 @@ class Message {
         inputTokens: json['input_tokens'] as int?,
         outputTokens: json['output_tokens'] as int?,
         estimatedCostMicros: json['estimated_cost_micros'] as int?,
+        isEstimated: (json['is_estimated'] as int? ?? 0) == 1 ||
+            json['is_estimated'] == true,
         errorCode: json['error_code'] as String?,
         errorMessage: json['error_message'] as String?,
         responseMetadata: json['response_metadata_json'] != null
@@ -87,6 +91,7 @@ class Message {
         'input_tokens': inputTokens,
         'output_tokens': outputTokens,
         'estimated_cost_micros': estimatedCostMicros,
+        'is_estimated': isEstimated ? 1 : 0,
         'error_code': errorCode,
         'error_message': errorMessage,
         'response_metadata_json':
@@ -146,6 +151,7 @@ class Message {
     int? inputTokens,
     int? outputTokens,
     int? estimatedCostMicros,
+    bool? isEstimated,
     String? errorCode,
     String? errorMessage,
     Map<String, dynamic>? responseMetadata,
@@ -166,6 +172,7 @@ class Message {
         inputTokens: inputTokens ?? this.inputTokens,
         outputTokens: outputTokens ?? this.outputTokens,
         estimatedCostMicros: estimatedCostMicros ?? this.estimatedCostMicros,
+        isEstimated: isEstimated ?? this.isEstimated,
         errorCode: errorCode ?? this.errorCode,
         errorMessage: errorMessage ?? this.errorMessage,
         responseMetadata: responseMetadata ?? this.responseMetadata,

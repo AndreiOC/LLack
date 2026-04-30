@@ -76,6 +76,7 @@ class MessageRepository {
     int? inputTokens,
     int? outputTokens,
     int? estimatedCostMicros,
+    bool isEstimated = false,
   }) {
     return _dao.finalizeStreaming(
       id,
@@ -85,6 +86,7 @@ class MessageRepository {
       inputTokens,
       outputTokens,
       estimatedCostMicros,
+      isEstimated,
     );
   }
 

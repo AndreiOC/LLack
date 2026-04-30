@@ -7,7 +7,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../domain/entities/entities.dart';
 
-/// Service for exporting conversations to various formats.
+/// Service for exporting conversations as Markdown or JSON.
 class ExportService {
   static final _dateFormat = DateFormat('yyyy-MM-dd_HH-mm');
 

@@ -12,6 +12,7 @@ class UsageSnapshot {
   final int inputTokens;
   final int outputTokens;
   final int estimatedCostMicros;
+  final bool isEstimated;
   final bool isLocal;
   final DateTime createdAt;
 
@@ -27,6 +28,7 @@ class UsageSnapshot {
     this.inputTokens = 0,
     this.outputTokens = 0,
     this.estimatedCostMicros = 0,
+    this.isEstimated = false,
     this.isLocal = false,
     required this.createdAt,
   });
@@ -45,6 +47,7 @@ class UsageSnapshot {
         inputTokens: json['input_tokens'] as int? ?? 0,
         outputTokens: json['output_tokens'] as int? ?? 0,
         estimatedCostMicros: json['estimated_cost_micros'] as int? ?? 0,
+        isEstimated: (json['is_estimated'] as int? ?? 0) == 1,
         isLocal: (json['is_local'] as int? ?? 0) == 1,
         createdAt:
             DateTime.fromMillisecondsSinceEpoch(json['created_at'] as int),
@@ -62,6 +65,7 @@ class UsageSnapshot {
         'input_tokens': inputTokens,
         'output_tokens': outputTokens,
         'estimated_cost_micros': estimatedCostMicros,
+        'is_estimated': isEstimated ? 1 : 0,
         'is_local': isLocal ? 1 : 0,
         'created_at': createdAt.millisecondsSinceEpoch,
       };
@@ -78,6 +82,7 @@ class UsageSnapshot {
     int? inputTokens,
     int? outputTokens,
     int? estimatedCostMicros,
+    bool? isEstimated,
     bool? isLocal,
     DateTime? createdAt,
   }) =>
@@ -93,6 +98,7 @@ class UsageSnapshot {
         inputTokens: inputTokens ?? this.inputTokens,
         outputTokens: outputTokens ?? this.outputTokens,
         estimatedCostMicros: estimatedCostMicros ?? this.estimatedCostMicros,
+        isEstimated: isEstimated ?? this.isEstimated,
         isLocal: isLocal ?? this.isLocal,
         createdAt: createdAt ?? this.createdAt,
       );

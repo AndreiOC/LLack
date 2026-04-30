@@ -7,7 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 /// Database configuration and initialization
 class DatabaseConfig {
   static const String databaseName = 'foss_chat.db';
-  static const int databaseVersion = 5;
+  static const int databaseVersion = 6;
   static const String _schemaAssetPath =
       'assets/migrations/001_initial_schema.sql';
   static const List<String> _dropStatements = <String>[

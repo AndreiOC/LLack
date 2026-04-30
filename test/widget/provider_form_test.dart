@@ -6,7 +6,7 @@ import 'package:foss_chat/features/providers/provider_editor_sheet.dart';
 
 void main() {
   group('Provider form validation widget tests', () {
-    testWidgets('empty display name shows validation error', (tester) async {
+    testWidgets('save validates the required fields', (tester) async {
       await tester.pumpWidget(
         ProviderScope(
           child: MaterialApp(
@@ -21,17 +21,20 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // The form should render
-      expect(find.text('Add provider'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Save provider'));
+      await tester.pump();
+
+      expect(find.text('Enter a provider name.'), findsOneWidget);
+      expect(find.text('Enter a base URL.'), findsOneWidget);
     });
 
-    testWidgets('valid form renders provider kind selector', (tester) async {
+    testWidgets('switching to Ollama hides the API key field', (tester) async {
       await tester.pumpWidget(
         ProviderScope(
           child: MaterialApp(
             home: Scaffold(
               body: ProviderEditorSheet(
-                initialKind: ProviderKind.ollama,
+                initialKind: ProviderKind.openaiCompatible,
                 isOnboarding: false,
               ),
             ),
@@ -40,8 +43,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Ollama'), findsOneWidget);
-      expect(find.text('OpenAI-compatible'), findsOneWidget);
+      expect(find.text('API key'), findsOneWidget);
+
+      await tester.tap(find.text('Ollama'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('API key'), findsNothing);
     });
   });
 }

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:sqflite/sqflite.dart';
 import '../../../domain/entities/entities.dart';
 
@@ -111,8 +113,7 @@ class SearchDao {
       }).toList();
     }
 
-    // Fallback: LIKE-only search
-    return _searchConversationsLike(trimmed, limit: limit);
+    return _searchAllLike(trimmed, limit: limit);
   }
 
   Future<List<ConversationSearchResult>> _searchConversationsFts(String query, {required int limit}) async {
@@ -148,7 +149,7 @@ class SearchDao {
       final title = m['title'] as String;
       return ConversationSearchResult(
         conversation: Conversation.fromJson(m),
-        snippet: title,
+        snippet: _buildLikeSnippet(title, query),
       );
     }).toList();
   }
@@ -182,7 +183,105 @@ class SearchDao {
     return maps.map((m) => MessageSearchResult(
       messageId: m['id'] as String,
       conversationId: m['conversation_id'] as String,
-      snippet: m['content_markdown'] as String,
+      snippet: _buildLikeSnippet(
+        (m['content_markdown'] as String?) ?? '',
+        query,
+      ),
     )).toList();
+  }
+
+  Future<List<ConversationSearchResult>> _searchAllLike(
+    String query, {
+    required int limit,
+  }) async {
+    final titleResults = await _searchConversationsLike(query, limit: limit);
+    final messageResults = await _searchMessagesLike(query, limit: limit);
+    final combined = <String, ConversationSearchResult>{
+      for (final result in titleResults) result.conversation.id: result,
+    };
+
+    final conversationIds = messageResults
+        .map((result) => result.conversationId)
+        .where((id) => !combined.containsKey(id))
+        .toSet()
+        .toList();
+    if (conversationIds.isNotEmpty) {
+      final conversationsById = await _fetchConversationsByIds(conversationIds);
+      for (final result in messageResults) {
+        if (combined.containsKey(result.conversationId)) {
+          continue;
+        }
+        final conversation = conversationsById[result.conversationId];
+        if (conversation == null) {
+          continue;
+        }
+        combined[conversation.id] = ConversationSearchResult(
+          conversation: conversation,
+          snippet: result.snippet,
+        );
+        if (combined.length >= limit) {
+          break;
+        }
+      }
+    }
+
+    final results = combined.values.toList()
+      ..sort(
+        (left, right) => right.conversation.updatedAt.compareTo(
+          left.conversation.updatedAt,
+        ),
+      );
+    return results.take(limit).toList();
+  }
+
+  Future<Map<String, Conversation>> _fetchConversationsByIds(
+    List<String> conversationIds,
+  ) async {
+    if (conversationIds.isEmpty) {
+      return const <String, Conversation>{};
+    }
+
+    final placeholders = List.filled(conversationIds.length, '?').join(', ');
+    final maps = await _db.rawQuery(
+      '''
+        SELECT *
+        FROM conversations
+        WHERE deleted_at IS NULL
+          AND id IN ($placeholders)
+      ''',
+      conversationIds,
+    );
+    return <String, Conversation>{
+      for (final map in maps)
+        (map['id'] as String): Conversation.fromJson(map),
+    };
+  }
+
+  String _buildLikeSnippet(String content, String query) {
+    final normalized = content.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.isEmpty) {
+      return '';
+    }
+
+    final lowerContent = normalized.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final matchIndex = lowerContent.indexOf(lowerQuery);
+    if (matchIndex == -1) {
+      return normalized.length <= 96
+          ? normalized
+          : '${normalized.substring(0, 93)}...';
+    }
+
+    final start = math.max(0, matchIndex - 36);
+    final end = math.min(
+      normalized.length,
+      matchIndex + query.length + 44,
+    );
+    final prefix = start > 0 ? '…' : '';
+    final suffix = end < normalized.length ? '…' : '';
+    final before = normalized.substring(start, matchIndex);
+    final match = normalized.substring(matchIndex, matchIndex + query.length);
+    final after = normalized.substring(matchIndex + query.length, end);
+    return '$prefix$before<mark>$match</mark>$after$suffix';
   }
 }

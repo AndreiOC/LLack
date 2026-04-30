@@ -69,6 +69,7 @@ CREATE TABLE messages (
   input_tokens INTEGER,
   output_tokens INTEGER,
   estimated_cost_micros INTEGER,
+  is_estimated INTEGER NOT NULL DEFAULT 0 CHECK (is_estimated IN (0, 1)),
   error_code TEXT,
   error_message TEXT,
   response_metadata_json TEXT,
@@ -127,6 +128,7 @@ CREATE TABLE IF NOT EXISTS usage_snapshots (
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
   estimated_cost_micros INTEGER NOT NULL DEFAULT 0,
+  is_estimated INTEGER NOT NULL DEFAULT 0 CHECK (is_estimated IN (0, 1)),
   is_local INTEGER NOT NULL DEFAULT 0 CHECK (is_local IN (0, 1)),
   created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
 );

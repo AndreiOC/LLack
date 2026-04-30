@@ -74,7 +74,7 @@ These packages are expected to be used in the first implementation pass, with ex
 - provider discovery and utilities: `bonsoir`, `network_info_plus`, `path_provider`, `uuid`
 - chat rendering: `flutter_markdown`, `flutter_html`, `flutter_highlight`
 - list and interaction components: `flutter_slidable`, `dropdown_button2`, `pull_to_refresh`
-- export and analytics: `pdf`, `share_plus`, `fl_chart`, `intl`
+- export and analytics: `share_plus`, `fl_chart`, `intl`
 - desktop controls and notifications: `hotkey_manager`, `flutter_local_notifications`
 
 ## 2. Implementation Corrections Derived From Investigation
@@ -701,7 +701,7 @@ Acceptance:
 
 #### FR-CNV-6 Export Chat
 
-- Export a single conversation as Markdown, JSON, or PDF.
+- Export a single conversation as Markdown or JSON.
 - Filename pattern should be deterministic and human readable.
 - JSON export contains metadata and active branch only by default.
 - Markdown export preserves role labels and code fences.

@@ -144,6 +144,7 @@ class MessageDao {
     int? inputTokens,
     int? outputTokens,
     int? estimatedCostMicros,
+    bool isEstimated,
   ) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _db.update(
@@ -156,6 +157,7 @@ class MessageDao {
         'input_tokens': inputTokens,
         'output_tokens': outputTokens,
         'estimated_cost_micros': estimatedCostMicros,
+        'is_estimated': isEstimated ? 1 : 0,
         'updated_at': now,
       },
       where: 'id = ?',

@@ -205,14 +205,18 @@ class ChatService {
         );
         yield ChatStreamEvent.error(error);
       } else {
-        final inputTokens = _coerceInt(metadata?['prompt_tokens']) ??
-            _coerceInt(metadata?['prompt_eval_count']) ??
+        final providerInputTokens = _coerceInt(metadata?['prompt_tokens']) ??
+            _coerceInt(metadata?['prompt_eval_count']);
+        final providerOutputTokens = _coerceInt(metadata?['completion_tokens']) ??
+            _coerceInt(metadata?['eval_count']);
+        final inputTokens = providerInputTokens ??
             _estimateTokensFromContent(
               messages.map((message) => message.content).join(' '),
             );
-        final outputTokens = _coerceInt(metadata?['completion_tokens']) ??
-            _coerceInt(metadata?['eval_count']) ??
+        final outputTokens = providerOutputTokens ??
             _estimateTokensFromContent(buffer.toString());
+        final isEstimated =
+            providerInputTokens == null || providerOutputTokens == null;
         final estimatedCostMicros = _estimateCostMicros(
           provider: provider,
           inputTokens: inputTokens,
@@ -227,6 +231,7 @@ class ChatService {
           inputTokens: inputTokens,
           outputTokens: outputTokens,
           estimatedCostMicros: estimatedCostMicros,
+          isEstimated: isEstimated,
         );
 
         await _providerModelRepo?.touchLastUsedByRemoteModelId(
@@ -241,6 +246,7 @@ class ChatService {
           inputTokens: inputTokens,
           outputTokens: outputTokens,
           estimatedCostMicros: estimatedCostMicros,
+          isEstimated: isEstimated,
         );
         yield ChatStreamEvent.done(metadata: metadata);
       }

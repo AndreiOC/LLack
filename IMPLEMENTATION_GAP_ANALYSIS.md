@@ -108,7 +108,7 @@ Conversations can be archived, but there is no dedicated UI to view and restore 
 ## Deferred / Optional Items (not required by spec)
 
 - **`workmanager` background sync** — Spec §2.3 says workmanager "may" be used where platform support exists. The required retry mechanism is foreground polling + manual retry UI. Workmanager is declared in `pubspec.yaml` but remains optional.
-- **PDF export** — Spec §9.4 FR-CNV-6 lists PDF as an export option, but Markdown + JSON already satisfy the core need. PDF is bloat for a FOSS chat app and pulls in a heavy rendering pipeline.
+- **Export scope** — Markdown + JSON already satisfy the core need, so the app keeps export intentionally narrow.
 
 ## Removed Phantom Items
 
@@ -126,7 +126,7 @@ Conversations can be archived, but there is no dedicated UI to view and restore 
 | `1.4 Goals` | Partial | Minimal setup, local persistence, provider switching, streaming, cancellation, secure secret storage, offline banner, spending alerts, and logging exist. | Recovery from temporary connectivity loss has a banner but lacks manual retry UI. |
 | `1.5 Non-Goals For Release 1` | Partial | No collaboration, sync, attachments, multimodal, or tool-calling code. | Web scaffolding still ships. |
 | `1.6 Technology Baseline` | Partial | Most listed packages are declared in `pubspec.yaml`. | `flutter_riverpod` is `^2.6.1`, not the spec baseline `^3.3.1`; `flutter_html` is not declared; SDK baseline is `>=3.0.0`, not explicitly `3.19+`. |
-| `1.7 Supporting Package Set` | Partial | Many expected packages are declared. | Several packages remain unused: `pdf`, `fl_chart`, `smooth_page_indicator`, `flutter_svg`, `dropdown_button2`, `flutter_slidable`, `pull_to_refresh`, `network_info_plus`. |
+| `1.7 Supporting Package Set` | Partial | Many expected packages are declared. | Several packages remain unused: `fl_chart`, `smooth_page_indicator`, `flutter_svg`, `dropdown_button2`, `flutter_slidable`, `pull_to_refresh`, `network_info_plus`. |
 
 ## 2. Implementation Corrections Derived From Investigation
 
@@ -241,7 +241,7 @@ Conversations can be archived, but there is no dedicated UI to view and restore 
 | `FR-CNV-3 Delete Conversation` | Complete | Soft delete using `deleted_at`; SnackBar with Undo shown immediately; `purgeOldDeleted` scheduled on app launch with 30-day threshold. | No archive recovery UI exists. |
 | `FR-CNV-4 Rename Conversation` | Complete | DAO/repository support title updates; rename dialog available from conversation tile popup menu. | No material gap. |
 | `FR-CNV-5 Search History` | Complete | FTS5 virtual tables `conversations_fts` and `messages_fts` with sync triggers; `SearchDao` provides snippet-highlighted search across titles and message content; falls back to `LIKE` when FTS5 unavailable. | No material gap. |
-| `FR-CNV-6 Export Chat` | Complete | `ExportService` supports Markdown and JSON export; share sheet shown from conversation tile; deterministic filenames; JSON contains metadata and active branch only. | PDF export is spec bloat — not implementing. |
+| `FR-CNV-6 Export Chat` | Complete | `ExportService` supports Markdown and JSON export; share sheet shown from conversation tile; deterministic filenames; JSON contains metadata and active branch only. | Export intentionally remains limited to the two text-based formats. |
 
 ### 9.5 Provider Switching
 

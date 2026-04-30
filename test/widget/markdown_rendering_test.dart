@@ -20,8 +20,8 @@ void main() {
       expect(find.byType(MarkdownBody), findsOneWidget);
     });
 
-    testWidgets('code block builder renders fenced code', (tester) async {
-      const markdown = '```dart\nvoid main() {}\n```';
+    testWidgets('code block builder renders fenced code with line numbers', (tester) async {
+      const markdown = '```dart\nvoid main() {}\nprint("x");\n```';
 
       await tester.pumpWidget(
         MaterialApp(
@@ -29,7 +29,7 @@ void main() {
             body: MarkdownBody(
               data: markdown,
               builders: {
-                'code': CodeBlockBuilder(),
+                'code': CodeBlockBuilder(showLineNumbers: true),
               },
             ),
           ),
@@ -37,8 +37,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // The code block builder should produce a widget tree
       expect(find.byType(MarkdownBody), findsOneWidget);
+      expect(find.text('1\n2'), findsOneWidget);
     });
   });
 }
