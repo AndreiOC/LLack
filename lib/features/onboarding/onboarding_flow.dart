@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart' hide Provider;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../app/providers/providers.dart';
 import '../../domain/entities/entities.dart';
+import '../providers/provider_editor_sheet.dart';
 
 class OnboardingFlow extends ConsumerStatefulWidget {
   const OnboardingFlow({super.key});
@@ -12,44 +14,29 @@ class OnboardingFlow extends ConsumerStatefulWidget {
 }
 
 class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
-  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  final TextEditingController _displayNameController = TextEditingController();
-  final TextEditingController _baseUrlController = TextEditingController();
-  final TextEditingController _apiKeyController = TextEditingController();
-  final TextEditingController _manualModelController = TextEditingController();
+  static const String _draftPageKey = 'onboarding_draft_page';
 
-  int _stepIndex = 0;
+  final PageController _pageController = PageController();
+  int _pageIndex = 0;
+  bool _isCompleting = false;
   bool _didHydrate = false;
-  bool _localOnlyMode = true;
-  bool _isValidating = false;
-  bool _isLoadingModels = false;
-  bool _isSaving = false;
-  ProviderKind _selectedKind = ProviderKind.ollama;
-  List<ProviderModel> _availableModels = const <ProviderModel>[];
-  String? _selectedModelId;
-  String? _statusMessage;
-  bool _lastValidationSucceeded = false;
+  bool _preferLocalOnlyMode = false;
 
   @override
   void dispose() {
-    _displayNameController.dispose();
-    _baseUrlController.dispose();
-    _apiKeyController.dispose();
-    _manualModelController.dispose();
+    _pageController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final onboardingAsync = ref.watch(onboardingProvider);
-    final discoveryState = ref.watch(ollamaDiscoveryProvider);
-    final onboardingState = onboardingAsync.valueOrNull;
+    final onboardingState = ref.watch(onboardingProvider).valueOrNull;
 
     if (!_didHydrate && onboardingState != null) {
       _didHydrate = true;
-      _localOnlyMode = onboardingState.localOnlyMode;
-      _applyKindDefaults(onboardingState.lastOllamaEndpoint);
+      _preferLocalOnlyMode = onboardingState.localOnlyMode;
+      _restoreDraftPage();
     }
 
     return DecoratedBox(
@@ -68,10 +55,10 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             return Center(
-              child: SingleChildScrollView(
+              child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 920),
+                  constraints: const BoxConstraints(maxWidth: 980),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.92),
@@ -89,20 +76,26 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
-                          _FlowHeader(stepIndex: _stepIndex),
-                          const SizedBox(height: 28),
-                          AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 300),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeInCubic,
-                            child: _stepIndex == 0
-                                ? _buildWelcomeStep(theme)
-                                : _buildProviderStep(
-                                    theme,
-                                    discoveryState,
-                                    onboardingState,
-                                  ),
+                          _FlowHeader(
+                            stepIndex: _pageIndex,
+                            onSkip: _pageIndex < 2
+                                ? () => _goToPage(2)
+                                : null,
                           ),
+                          const SizedBox(height: 28),
+                          Expanded(
+                            child: PageView(
+                              controller: _pageController,
+                              onPageChanged: _handlePageChanged,
+                              children: <Widget>[
+                                _buildValuePage(theme),
+                                _buildPrivacyPage(theme),
+                                _buildSetupPage(theme, onboardingState),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          _buildFooterActions(),
                         ],
                       ),
                     ),
@@ -116,12 +109,10 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
     );
   }
 
-  Widget _buildWelcomeStep(ThemeData theme) {
-    return Column(
-      key: const ValueKey<String>('welcome-step'),
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildValuePage(ThemeData theme) {
+    return ListView(
       children: <Widget>[
-        const _HeroBadge(label: 'Local-first chat stack'),
+        const _HeroBadge(label: 'Product value'),
         const SizedBox(height: 18),
         Text(
           'Bring your models online without surrendering the app.',
@@ -133,7 +124,7 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
         ),
         const SizedBox(height: 12),
         Text(
-          'FOSS Chat stores provider metadata in SQLite, keeps API keys in secure storage, and gives Ollama plus OpenAI-compatible backends the same conversation UI.',
+          'FOSS Chat keeps local and hosted providers in the same conversation workflow so you can start with Ollama now and add cloud capacity later without switching tools.',
           style: theme.textTheme.titleMedium?.copyWith(
             color: const Color(0xFF5F4634),
             height: 1.5,
@@ -144,12 +135,6 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
           spacing: 16,
           runSpacing: 16,
           children: <Widget>[
-            _FeatureCard(
-              title: 'Private by default',
-              body:
-                  'Stay local with Ollama, or bring your own hosted endpoint only when you need it.',
-              icon: Icons.lock_outline,
-            ),
             _FeatureCard(
               title: 'One chat surface',
               body:
@@ -162,44 +147,149 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
                   'See assistant output appear token by token instead of waiting for a full block.',
               icon: Icons.graphic_eq_rounded,
             ),
+            _FeatureCard(
+              title: 'Durable local history',
+              body:
+                  'Messages and conversations persist locally so the thread is still there when you come back.',
+              icon: Icons.history_rounded,
+            ),
           ],
         ),
-        const SizedBox(height: 32),
+      ],
+    );
+  }
+
+  Widget _buildPrivacyPage(ThemeData theme) {
+    return ListView(
+      children: <Widget>[
+        const _HeroBadge(label: 'Privacy and local-first'),
+        const SizedBox(height: 18),
+        Text(
+          'Keep the app private by default, then opt into remote providers deliberately.',
+          style: theme.textTheme.displaySmall?.copyWith(
+            color: const Color(0xFF2B1D12),
+            fontWeight: FontWeight.w800,
+            height: 1.1,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Spec FR-ONB-2 and the security section require API keys to stay in secure storage while provider metadata lives in SQLite. Local-only mode keeps the onboarding and the rest of the app biased toward Ollama-first paths.',
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: const Color(0xFF5F4634),
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 28),
+        const Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: <Widget>[
+            _FeatureCard(
+              title: 'Secure key handling',
+              body:
+                  'API keys are masked in the form, stored in platform secure storage, and never written into SQLite.',
+              icon: Icons.lock_outline,
+            ),
+            _FeatureCard(
+              title: 'Local-only mode',
+              body:
+                  'Suppress cloud-provider nudges and keep the app centered on local inference when that is the right fit.',
+              icon: Icons.memory_rounded,
+            ),
+            _FeatureCard(
+              title: 'Manual fallback',
+              body:
+                  'Ollama discovery is helpful, but manual endpoint entry remains available when scans fail.',
+              icon: Icons.route_outlined,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSetupPage(
+    ThemeData theme,
+    OnboardingState? onboardingState,
+  ) {
+    return ListView(
+      children: <Widget>[
+        const _HeroBadge(label: 'Setup choices'),
+        const SizedBox(height: 18),
+        Text(
+          'Choose how you want to start.',
+          style: theme.textTheme.displaySmall?.copyWith(
+            color: const Color(0xFF2B1D12),
+            fontWeight: FontWeight.w800,
+            height: 1.1,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Spec FR-ONB-1 and FR-ONB-4 require a real setup choice, a skip path, and a persistent local-only option rather than a single forced provider flow.',
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: const Color(0xFF5F4634),
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 24),
+        SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Prefer local-only mode after setup'),
+          subtitle: const Text(
+            'Suppress cloud-provider nudges and keep future add-provider flows biased toward Ollama.',
+          ),
+          value: _preferLocalOnlyMode,
+          onChanged: (value) {
+            setState(() {
+              _preferLocalOnlyMode = value;
+            });
+          },
+        ),
+        const SizedBox(height: 20),
         LayoutBuilder(
           builder: (context, constraints) {
-            final isNarrow = constraints.maxWidth < 680;
-            final children = <Widget>[
-              Expanded(
-                child: _ChoiceCard(
-                  title: 'Start with Ollama',
-                  subtitle:
-                      'Use a local endpoint and let the app scan common hosts for you.',
-                  accent: const Color(0xFFB85C38),
-                  icon: Icons.memory_rounded,
-                  actionLabel: 'Use Ollama',
-                  onPressed: () => _goToProviderStep(ProviderKind.ollama),
-                ),
-              ),
-              Expanded(
-                child: _ChoiceCard(
-                  title: 'Use an API provider',
-                  subtitle:
-                      'Connect any OpenAI-compatible base URL with a secure API key.',
-                  accent: const Color(0xFF264653),
-                  icon: Icons.cloud_queue_rounded,
-                  actionLabel: 'Use API Provider',
-                  onPressed: () =>
-                      _goToProviderStep(ProviderKind.openaiCompatible),
-                ),
-              ),
-            ];
+            final isNarrow = constraints.maxWidth < 760;
+            final ollamaCard = _ChoiceCard(
+              title: 'Start with Ollama',
+              subtitle:
+                  'Open the shared provider editor with Ollama-first defaults and optional LAN discovery.',
+              accent: const Color(0xFFB85C38),
+              icon: Icons.memory_rounded,
+              actionLabel: 'Configure Ollama',
+              onPressed: _isCompleting
+                  ? null
+                  : () => _configureProvider(
+                        ProviderKind.ollama,
+                        localOnlyMode: _preferLocalOnlyMode,
+                        lastOllamaEndpoint:
+                            onboardingState?.lastOllamaEndpoint,
+                      ),
+            );
+            final apiCard = _ChoiceCard(
+              title: 'Use an API provider',
+              subtitle:
+                  'Connect an OpenAI-compatible base URL with secure API-key storage and model selection.',
+              accent: const Color(0xFF264653),
+              icon: Icons.cloud_queue_rounded,
+              actionLabel: 'Configure API Provider',
+              onPressed: _isCompleting
+                  ? null
+                  : () => _configureProvider(
+                        ProviderKind.openaiCompatible,
+                        localOnlyMode: false,
+                        lastOllamaEndpoint:
+                            onboardingState?.lastOllamaEndpoint,
+                      ),
+            );
 
             if (isNarrow) {
               return Column(
                 children: <Widget>[
-                  children.first,
+                  ollamaCard,
                   const SizedBox(height: 16),
-                  children.last,
+                  apiCard,
                 ],
               );
             }
@@ -207,626 +297,218 @@ class _OnboardingFlowState extends ConsumerState<OnboardingFlow> {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                children.first,
+                Expanded(child: ollamaCard),
                 const SizedBox(width: 16),
-                children.last,
+                Expanded(child: apiCard),
               ],
             );
           },
+        ),
+        const SizedBox(height: 16),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF7F1EA),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(22),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Icon(Icons.offline_bolt_rounded,
+                    color: Color(0xFF7B4A2E)),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        'Local only for now',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF2B1D12),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Complete onboarding without adding a provider yet. The app will open to the main shell, keep `skip_cloud_providers = true`, and let you add Ollama later from provider management.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: const Color(0xFF5F4634),
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton.tonalIcon(
+                        onPressed: _isCompleting ? null : _completeLocalOnly,
+                        icon: _isCompleting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.arrow_forward_rounded),
+                        label: const Text('Enter the app'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildProviderStep(
-    ThemeData theme,
-    OllamaDiscoveryState discoveryState,
-    OnboardingState? onboardingState,
-  ) {
-    final hasLoadedModels = _availableModels.isNotEmpty;
-    final ollamaEndpoint = onboardingState?.lastOllamaEndpoint;
-
-    return Form(
-      key: _formKey,
-      child: Column(
-        key: const ValueKey<String>('provider-step'),
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildFooterActions() {
+    if (_pageIndex == 2) {
+      return Row(
         children: <Widget>[
-          Row(
-            children: <Widget>[
-              IconButton.filledTonal(
-                onPressed: () => setState(() {
-                  _stepIndex = 0;
-                }),
-                icon: const Icon(Icons.arrow_back_rounded),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Provider setup',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    color: const Color(0xFF2B1D12),
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
+          OutlinedButton(
+            onPressed: _isCompleting ? null : () => _goToPage(1),
+            child: const Text('Back'),
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Configure the provider you want to use first. You can add more later without changing the conversation flow.',
-            style: theme.textTheme.bodyLarge?.copyWith(
-              color: const Color(0xFF5F4634),
-              height: 1.5,
-            ),
+          const Spacer(),
+          TextButton(
+            onPressed: _isCompleting ? null : _completeLocalOnly,
+            child: const Text('Skip setup'),
           ),
-          const SizedBox(height: 24),
-          SegmentedButton<ProviderKind>(
-            selected: <ProviderKind>{_selectedKind},
-            showSelectedIcon: false,
-            segments: const <ButtonSegment<ProviderKind>>[
-              ButtonSegment<ProviderKind>(
-                value: ProviderKind.ollama,
-                label: Text('Ollama'),
-                icon: Icon(Icons.memory_rounded),
-              ),
-              ButtonSegment<ProviderKind>(
-                value: ProviderKind.openaiCompatible,
-                label: Text('OpenAI-compatible'),
-                icon: Icon(Icons.cloud_queue_rounded),
-              ),
-            ],
-            onSelectionChanged: (selection) {
-              final nextKind = selection.first;
-              setState(() {
-                _selectedKind = nextKind;
-                _statusMessage = null;
-                _lastValidationSucceeded = false;
-                _availableModels = const <ProviderModel>[];
-                _selectedModelId = null;
-                _manualModelController.clear();
-                _applyKindDefaults(ollamaEndpoint);
-                if (nextKind == ProviderKind.ollama) {
-                  _localOnlyMode = true;
-                } else {
-                  _localOnlyMode = false;
-                }
-              });
-            },
-          ),
-          const SizedBox(height: 20),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Prefer local-only mode'),
-            subtitle: const Text(
-              'Hide cloud-provider nudges and keep the onboarding focused on local inference.',
-            ),
-            value: _localOnlyMode,
-            onChanged: (value) {
-              setState(() {
-                _localOnlyMode = value;
-              });
-            },
-          ),
-          const SizedBox(height: 20),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final isNarrow = constraints.maxWidth < 760;
-              final formColumn = Expanded(
-                child: Column(
-                  children: <Widget>[
-                    TextFormField(
-                      controller: _displayNameController,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(
-                        labelText: 'Display name',
-                        hintText: 'Local Ollama',
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Enter a provider name.';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _baseUrlController,
-                      textInputAction: TextInputAction.next,
-                      decoration: InputDecoration(
-                        labelText: _selectedKind == ProviderKind.ollama
-                            ? 'Ollama endpoint'
-                            : 'Base URL',
-                        hintText: _selectedKind == ProviderKind.ollama
-                            ? 'http://127.0.0.1:11434'
-                            : 'https://api.openai.com/v1',
-                      ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) {
-                          return 'Enter a base URL.';
-                        }
-                        final normalized = _normalizeEndpoint(value);
-                        final parsed = Uri.tryParse(normalized);
-                        if (parsed == null ||
-                            !parsed.hasScheme ||
-                            parsed.host.isEmpty) {
-                          return 'Enter a valid URL.';
-                        }
-                        return null;
-                      },
-                    ),
-                    if (_selectedKind ==
-                        ProviderKind.openaiCompatible) ...<Widget>[
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _apiKeyController,
-                        obscureText: true,
-                        textInputAction: TextInputAction.next,
-                        decoration: const InputDecoration(
-                          labelText: 'API key',
-                          hintText: 'sk-...',
-                        ),
-                        validator: (value) {
-                          if (_selectedKind == ProviderKind.openaiCompatible &&
-                              (value == null || value.trim().isEmpty)) {
-                            return 'Enter an API key.';
-                          }
-                          return null;
-                        },
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    if (hasLoadedModels)
-                      DropdownButtonFormField<String>(
-                        value: _selectedModelId,
-                        items: _availableModels
-                            .map(
-                              (model) => DropdownMenuItem<String>(
-                                value: model.remoteModelId,
-                                child: Text(model.displayName),
-                              ),
-                            )
-                            .toList(),
-                        decoration: const InputDecoration(
-                          labelText: 'Default model',
-                        ),
-                        onChanged: (value) {
-                          setState(() {
-                            _selectedModelId = value;
-                          });
-                        },
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Choose a default model.';
-                          }
-                          return null;
-                        },
-                      )
-                    else
-                      TextFormField(
-                        controller: _manualModelController,
-                        textInputAction: TextInputAction.done,
-                        decoration: const InputDecoration(
-                          labelText: 'Default model',
-                          hintText: 'llama3.1:8b or gpt-4o-mini',
-                        ),
-                        validator: (value) {
-                          if (!hasLoadedModels &&
-                              (value == null || value.trim().isEmpty)) {
-                            return 'Enter a default model id.';
-                          }
-                          return null;
-                        },
-                      ),
-                    const SizedBox(height: 16),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF7F1EA),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          const Icon(Icons.security_rounded,
-                              color: Color(0xFF7B4A2E)),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              _selectedKind == ProviderKind.ollama
-                                  ? 'Metadata is stored locally. For Ollama, there is no API key to manage unless you front it with a proxy.'
-                                  : 'Provider metadata stays in SQLite. Your API key is stored separately using the platform secure-storage backend.',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: const Color(0xFF5F4634),
-                                height: 1.4,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              );
-
-              final discoveryColumn = Expanded(
-                child: _selectedKind == ProviderKind.ollama
-                    ? _DiscoveryPanel(
-                        state: discoveryState,
-                        lastKnownEndpoint: ollamaEndpoint,
-                        selectedEndpoint: _baseUrlController.text.trim(),
-                        onScan: () {
-                          ref
-                              .read(ollamaDiscoveryProvider.notifier)
-                              .scan(lastKnownEndpoint: ollamaEndpoint);
-                        },
-                        onUseCandidate: _applyCandidate,
-                      )
-                    : _CloudSetupPanel(
-                        onPrefillOpenAi: () {
-                          setState(() {
-                            if (_displayNameController.text.trim().isEmpty ||
-                                _displayNameController.text.trim() ==
-                                    'API Provider') {
-                              _displayNameController.text = 'OpenAI';
-                            }
-                            _baseUrlController.text =
-                                'https://api.openai.com/v1';
-                            _statusMessage = null;
-                          });
-                        },
-                      ),
-              );
-
-              if (isNarrow) {
-                return Column(
-                  children: <Widget>[
-                    formColumn,
-                    const SizedBox(height: 20),
-                    discoveryColumn,
-                  ],
-                );
-              }
-
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  formColumn,
-                  const SizedBox(width: 20),
-                  discoveryColumn,
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 24),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: <Widget>[
-              FilledButton.icon(
-                onPressed: _isValidating ? null : _validateProvider,
-                icon: _isValidating
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.health_and_safety_outlined),
-                label: const Text('Test connection'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _isLoadingModels ? null : _loadModels,
-                icon: _isLoadingModels
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.dataset_outlined),
-                label: const Text('Fetch models'),
-              ),
-              FilledButton.tonalIcon(
-                onPressed: _isSaving ? null : _saveProvider,
-                icon: _isSaving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.arrow_forward_rounded),
-                label: const Text('Finish setup'),
-              ),
-            ],
-          ),
-          if (_statusMessage != null) ...<Widget>[
-            const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _lastValidationSucceeded
-                    ? const Color(0xFFE6F4EA)
-                    : const Color(0xFFFCE8E6),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Row(
-                children: <Widget>[
-                  Icon(
-                    _lastValidationSucceeded
-                        ? Icons.check_circle_outline_rounded
-                        : Icons.error_outline_rounded,
-                    color: _lastValidationSucceeded
-                        ? const Color(0xFF2D6A4F)
-                        : const Color(0xFF9C2F2F),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      _statusMessage!,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: _lastValidationSucceeded
-                            ? const Color(0xFF2D6A4F)
-                            : const Color(0xFF9C2F2F),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
-      ),
+      );
+    }
+
+    return Row(
+      children: <Widget>[
+        if (_pageIndex > 0)
+          OutlinedButton(
+            onPressed: _isCompleting ? null : () => _goToPage(_pageIndex - 1),
+            child: const Text('Back'),
+          ),
+        if (_pageIndex > 0) const SizedBox(width: 12),
+        if (_pageIndex == 0)
+          TextButton(
+            onPressed: _isCompleting ? null : () => _goToPage(2),
+            child: const Text('Skip to setup'),
+          ),
+        const Spacer(),
+        FilledButton(
+          onPressed: _isCompleting ? null : () => _goToPage(_pageIndex + 1),
+          child: const Text('Next'),
+        ),
+      ],
     );
   }
 
-  void _goToProviderStep(ProviderKind kind) {
+  Future<void> _configureProvider(
+    ProviderKind kind, {
+    required bool localOnlyMode,
+    String? lastOllamaEndpoint,
+  }) async {
     setState(() {
-      _stepIndex = 1;
-      _selectedKind = kind;
-      _availableModels = const <ProviderModel>[];
-      _selectedModelId = null;
-      _manualModelController.clear();
-      _statusMessage = null;
-      _lastValidationSucceeded = false;
-      if (kind == ProviderKind.ollama) {
-        _localOnlyMode = true;
-      }
-      _applyKindDefaults(
-          ref.read(onboardingProvider).valueOrNull?.lastOllamaEndpoint);
-    });
-  }
-
-  void _applyKindDefaults(String? lastOllamaEndpoint) {
-    final defaultName =
-        _selectedKind == ProviderKind.ollama ? 'Local Ollama' : 'API Provider';
-    final currentName = _displayNameController.text.trim();
-    if (currentName.isEmpty ||
-        currentName == 'Local Ollama' ||
-        currentName == 'API Provider' ||
-        currentName == 'OpenAI') {
-      _displayNameController.text = defaultName;
-    }
-
-    final currentBaseUrl = _baseUrlController.text.trim();
-    if (_selectedKind == ProviderKind.ollama) {
-      if (currentBaseUrl.isEmpty ||
-          currentBaseUrl == 'https://api.openai.com/v1') {
-        _baseUrlController.text = lastOllamaEndpoint?.trim().isNotEmpty == true
-            ? lastOllamaEndpoint!.trim()
-            : 'http://127.0.0.1:11434';
-      }
-      _apiKeyController.clear();
-    } else if (currentBaseUrl.isEmpty ||
-        currentBaseUrl == 'http://127.0.0.1:11434' ||
-        currentBaseUrl == 'http://localhost:11434' ||
-        currentBaseUrl == (lastOllamaEndpoint ?? '')) {
-      _baseUrlController.text = 'https://api.openai.com/v1';
-    }
-  }
-
-  Future<void> _validateProvider() async {
-    if (!_validateForm()) {
-      return;
-    }
-
-    setState(() {
-      _isValidating = true;
-      _statusMessage = null;
+      _isCompleting = true;
     });
 
     try {
-      final result =
-          await ref.read(providerManagementProvider.notifier).validateDraft(
-                _draftProvider(),
-                apiKey: _apiKeyValue,
-              );
-      if (!mounted) {
+      final provider = await showProviderEditorSheet(
+        context,
+        initialKind: kind,
+        lastKnownOllamaEndpoint: lastOllamaEndpoint,
+        isOnboarding: true,
+      );
+      if (provider == null) {
         return;
       }
 
-      setState(() {
-        _lastValidationSucceeded = result.isValid;
-        _statusMessage = result.isValid
-            ? 'Connection succeeded.'
-            : (result.errorMessage ?? 'Validation failed.');
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _lastValidationSucceeded = false;
-        _statusMessage = '$error';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isValidating = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadModels() async {
-    if (!_validateForm()) {
-      return;
-    }
-
-    setState(() {
-      _isLoadingModels = true;
-      _statusMessage = null;
-    });
-
-    try {
-      final models = await ref
-          .read(providerManagementProvider.notifier)
-          .fetchModelsForDraft(
-            _draftProvider(),
-            apiKey: _apiKeyValue,
-          );
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _availableModels = models;
-        _selectedModelId =
-            models.isNotEmpty ? models.first.remoteModelId : null;
-        _lastValidationSucceeded = models.isNotEmpty;
-        _statusMessage = models.isEmpty
-            ? 'The provider responded, but it did not return any models.'
-            : 'Loaded ${models.length} model${models.length == 1 ? '' : 's'}.';
-      });
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _lastValidationSucceeded = false;
-        _statusMessage = '$error';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoadingModels = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _saveProvider() async {
-    if (!_validateForm()) {
-      return;
-    }
-
-    final defaultModelId = _resolvedModelId;
-    if (defaultModelId == null || defaultModelId.isEmpty) {
-      setState(() {
-        _lastValidationSucceeded = false;
-        _statusMessage = 'Choose a default model before finishing setup.';
-      });
-      return;
-    }
-
-    setState(() {
-      _isSaving = true;
-      _statusMessage = null;
-    });
-
-    try {
-      final provider =
-          _draftProvider().copyWith(defaultModelId: defaultModelId);
-      await ref.read(providerManagementProvider.notifier).addProvider(
-            provider,
-            apiKey: _apiKeyValue,
-          );
       await ref.read(onboardingProvider.notifier).complete(
-            localOnlyMode: _localOnlyMode,
+            localOnlyMode: localOnlyMode,
             lastOllamaEndpoint:
-                _selectedKind == ProviderKind.ollama ? provider.baseUrl : null,
+                provider.kind == ProviderKind.ollama ? provider.baseUrl : null,
           );
+      await _clearDraftPage();
+      ref.invalidate(providerManagementProvider);
       ref.invalidate(chatStateProvider);
       ref.invalidate(conversationListProvider);
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _lastValidationSucceeded = false;
-        _statusMessage = '$error';
-      });
     } finally {
       if (mounted) {
         setState(() {
-          _isSaving = false;
+          _isCompleting = false;
         });
       }
     }
   }
 
-  void _applyCandidate(OllamaEndpointCandidate candidate) {
+  Future<void> _completeLocalOnly() async {
     setState(() {
-      _selectedKind = ProviderKind.ollama;
-      if (_displayNameController.text.trim().isEmpty ||
-          _displayNameController.text.trim() == 'Local Ollama' ||
-          _displayNameController.text.trim() == 'API Provider') {
-        _displayNameController.text = candidate.label;
-      }
-      _baseUrlController.text = candidate.endpoint;
-      _statusMessage = candidate.detail;
-      _lastValidationSucceeded = candidate.isReachable;
+      _isCompleting = true;
     });
+
+    try {
+      final onboardingState = ref.read(onboardingProvider).valueOrNull;
+      await ref.read(onboardingProvider.notifier).complete(
+            localOnlyMode: true,
+            lastOllamaEndpoint: onboardingState?.lastOllamaEndpoint,
+          );
+      await _clearDraftPage();
+      ref.invalidate(chatStateProvider);
+      ref.invalidate(conversationListProvider);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCompleting = false;
+        });
+      }
+    }
   }
 
-  bool _validateForm() {
-    return _formKey.currentState?.validate() ?? false;
-  }
-
-  Provider _draftProvider() {
-    final now = DateTime.now();
-    return Provider(
-      id: 'draft-provider',
-      kind: _selectedKind,
-      displayName: _displayNameController.text.trim(),
-      baseUrl: _normalizeEndpoint(_baseUrlController.text),
-      defaultModelId: _resolvedModelId,
-      headers: const <String, String>{},
-      settings: const <String, dynamic>{},
-      healthStatus: ProviderHealthStatus.neverChecked,
-      createdAt: now,
-      updatedAt: now,
+  Future<void> _goToPage(int targetPage) async {
+    await _pageController.animateToPage(
+      targetPage,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
     );
   }
 
-  String? get _apiKeyValue {
-    final trimmed = _apiKeyController.text.trim();
-    return trimmed.isEmpty ? null : trimmed;
+  Future<void> _handlePageChanged(int page) async {
+    setState(() {
+      _pageIndex = page;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_draftPageKey, page);
   }
 
-  String? get _resolvedModelId {
-    if (_selectedModelId != null && _selectedModelId!.trim().isNotEmpty) {
-      return _selectedModelId!.trim();
+  Future<void> _restoreDraftPage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final page = prefs.getInt(_draftPageKey) ?? 0;
+    if (!mounted || page == 0) {
+      return;
     }
-    final trimmed = _manualModelController.text.trim();
-    return trimmed.isEmpty ? null : trimmed;
+    final safePage = page.clamp(0, 2).toInt();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _pageController.jumpToPage(safePage);
+      setState(() {
+        _pageIndex = safePage;
+      });
+    });
   }
 
-  String _normalizeEndpoint(String rawValue) {
-    final trimmed = rawValue.trim();
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      return trimmed;
-    }
-    return 'http://$trimmed';
+  Future<void> _clearDraftPage() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_draftPageKey);
   }
 }
 
 class _FlowHeader extends StatelessWidget {
   final int stepIndex;
+  final VoidCallback? onSkip;
 
-  const _FlowHeader({required this.stepIndex});
+  const _FlowHeader({
+    required this.stepIndex,
+    required this.onSkip,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -842,7 +524,7 @@ class _FlowHeader extends StatelessWidget {
         ),
         const Spacer(),
         Row(
-          children: List<Widget>.generate(2, (index) {
+          children: List<Widget>.generate(3, (index) {
             final isActive = index <= stepIndex;
             return AnimatedContainer(
               duration: const Duration(milliseconds: 240),
@@ -858,6 +540,13 @@ class _FlowHeader extends StatelessWidget {
             );
           }),
         ),
+        if (onSkip != null) ...<Widget>[
+          const SizedBox(width: 14),
+          TextButton(
+            onPressed: onSkip,
+            child: const Text('Skip'),
+          ),
+        ],
       ],
     );
   }
@@ -945,7 +634,7 @@ class _ChoiceCard extends StatelessWidget {
   final Color accent;
   final IconData icon;
   final String actionLabel;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _ChoiceCard({
     required this.title,
@@ -1002,246 +691,6 @@ class _ChoiceCard extends StatelessWidget {
                 foregroundColor: Colors.white,
               ),
               child: Text(actionLabel),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DiscoveryPanel extends StatelessWidget {
-  final OllamaDiscoveryState state;
-  final String? lastKnownEndpoint;
-  final String selectedEndpoint;
-  final VoidCallback onScan;
-  final ValueChanged<OllamaEndpointCandidate> onUseCandidate;
-
-  const _DiscoveryPanel({
-    required this.state,
-    required this.lastKnownEndpoint,
-    required this.selectedEndpoint,
-    required this.onScan,
-    required this.onUseCandidate,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final hasCandidates = state.candidates.isNotEmpty;
-
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF7F1EA),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                const Icon(Icons.radar_rounded, color: Color(0xFF7B4A2E)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Ollama discovery',
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF2B1D12),
-                    ),
-                  ),
-                ),
-                FilledButton.tonalIcon(
-                  onPressed: state.isScanning ? null : onScan,
-                  icon: state.isScanning
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.search_rounded),
-                  label: const Text('Scan'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'The scan probes common local endpoints and listens briefly for `_ollama._tcp` Bonjour broadcasts.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF5F4634),
-                height: 1.45,
-              ),
-            ),
-            if (lastKnownEndpoint != null &&
-                lastKnownEndpoint!.trim().isNotEmpty) ...<Widget>[
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: <Widget>[
-                  const Chip(
-                    label: Text('Saved endpoint'),
-                    avatar: Icon(Icons.history_rounded, size: 18),
-                  ),
-                  ActionChip(
-                    label: Text(lastKnownEndpoint!),
-                    onPressed: () {
-                      onUseCandidate(
-                        OllamaEndpointCandidate(
-                          label: 'Last successful endpoint',
-                          endpoint: lastKnownEndpoint!,
-                          source: 'Saved',
-                          isReachable: true,
-                          modelCount: null,
-                          detail: 'Saved from a previous successful session.',
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ],
-            if (state.error != null) ...<Widget>[
-              const SizedBox(height: 16),
-              Text(
-                state.error!,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: const Color(0xFF9C2F2F),
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            if (!hasCandidates && !state.isScanning)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Text(
-                  'No scan results yet. Use the manual endpoint field or run a scan.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF5F4634),
-                  ),
-                ),
-              ),
-            if (hasCandidates)
-              ...state.candidates.map(
-                (candidate) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(
-                        color: candidate.endpoint == selectedEndpoint
-                            ? const Color(0xFFB85C38)
-                            : Colors.transparent,
-                      ),
-                    ),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      leading: Icon(
-                        candidate.isReachable
-                            ? Icons.check_circle_outline_rounded
-                            : Icons.wifi_off_rounded,
-                        color: candidate.isReachable
-                            ? const Color(0xFF2D6A4F)
-                            : const Color(0xFF9C2F2F),
-                      ),
-                      title: Text(candidate.label),
-                      subtitle: Text(
-                        '${candidate.endpoint}\n${candidate.source}${candidate.detail != null ? ' · ${candidate.detail}' : ''}',
-                      ),
-                      trailing: TextButton(
-                        onPressed: () => onUseCandidate(candidate),
-                        child: const Text('Use'),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CloudSetupPanel extends StatelessWidget {
-  final VoidCallback onPrefillOpenAi;
-
-  const _CloudSetupPanel({required this.onPrefillOpenAi});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color(0xFFEEF5F7),
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                const Icon(Icons.cloud_queue_rounded, color: Color(0xFF264653)),
-                const SizedBox(width: 10),
-                Text(
-                  'API-compatible setup',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF17313A),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Use this path for OpenAI-compatible endpoints such as OpenAI, OpenRouter, Groq, or self-hosted gateways that expose `/models` and `/chat/completions`.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF36525A),
-                height: 1.45,
-              ),
-            ),
-            const SizedBox(height: 18),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text(
-                    'Quick start',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Prefill the standard OpenAI base URL, then test the connection and fetch models to choose a default.',
-                  ),
-                  const SizedBox(height: 14),
-                  FilledButton.tonalIcon(
-                    onPressed: onPrefillOpenAi,
-                    icon: const Icon(Icons.auto_fix_high_rounded),
-                    label: const Text('Use OpenAI defaults'),
-                  ),
-                ],
-              ),
             ),
           ],
         ),

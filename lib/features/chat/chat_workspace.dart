@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../app/providers/providers.dart';
 import '../../data/services/usage_service.dart';
 import '../../domain/entities/entities.dart';
+import '../providers/provider_management_sheet.dart';
 import 'usage_dashboard_sheet.dart';
 
 class ChatWorkspace extends ConsumerStatefulWidget {
@@ -153,6 +154,7 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
                         .deleteMessage(messageId);
                   },
                   onOpenUsageDashboard: _openUsageDashboard,
+                  onOpenProviderManagement: _openProviderManagement,
                   onDismissUsageBanner: _dismissUsageBanner,
                   onRestartOnboarding: () async {
                     await ref.read(onboardingProvider.notifier).reopen();
@@ -246,6 +248,10 @@ class _ChatWorkspaceState extends ConsumerState<ChatWorkspace> {
       showDragHandle: true,
       builder: (context) => const UsageDashboardSheet(),
     );
+  }
+
+  Future<void> _openProviderManagement() async {
+    await showProviderManagementSheet(context);
   }
 
   Future<void> _dismissUsageBanner(UsageThresholdState state) async {
@@ -463,10 +469,13 @@ class _ConversationTile extends StatelessWidget {
                   switch (action) {
                     case _ConversationAction.pin:
                       onTogglePin();
+                      break;
                     case _ConversationAction.archive:
                       onArchive();
+                      break;
                     case _ConversationAction.delete:
                       onDelete();
+                      break;
                   }
                 },
               ),
@@ -493,6 +502,7 @@ class _ChatPanel extends StatelessWidget {
   final Future<void> Function(String messageId) onRetryMessage;
   final Future<void> Function(String messageId) onDeleteMessage;
   final Future<void> Function() onOpenUsageDashboard;
+  final Future<void> Function() onOpenProviderManagement;
   final Future<void> Function(UsageThresholdState state) onDismissUsageBanner;
   final Future<void> Function() onRestartOnboarding;
 
@@ -509,6 +519,7 @@ class _ChatPanel extends StatelessWidget {
     required this.onRetryMessage,
     required this.onDeleteMessage,
     required this.onOpenUsageDashboard,
+    required this.onOpenProviderManagement,
     required this.onDismissUsageBanner,
     required this.onRestartOnboarding,
   });
@@ -516,7 +527,10 @@ class _ChatPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (providers.isEmpty) {
-      return _EmptyProviderState(onRestartOnboarding: onRestartOnboarding);
+      return _EmptyProviderState(
+        onRestartOnboarding: onRestartOnboarding,
+        onOpenProviderManagement: onOpenProviderManagement,
+      );
     }
 
     final selectedProvider = chatState.selectedProvider ?? providers.first;
@@ -533,6 +547,7 @@ class _ChatPanel extends StatelessWidget {
           providers: providers,
           onProviderSelected: onProviderSelected,
           onOpenUsageDashboard: onOpenUsageDashboard,
+          onOpenProviderManagement: onOpenProviderManagement,
         ),
         if (usageOverviewAsync.valueOrNull case final overview?
             when overview.shouldShowThresholdBanner)
@@ -582,6 +597,7 @@ class _ChatHeader extends StatelessWidget {
   final List<Provider> providers;
   final Future<void> Function(Provider provider) onProviderSelected;
   final Future<void> Function() onOpenUsageDashboard;
+  final Future<void> Function() onOpenProviderManagement;
 
   const _ChatHeader({
     required this.showDrawerButton,
@@ -591,6 +607,7 @@ class _ChatHeader extends StatelessWidget {
     required this.providers,
     required this.onProviderSelected,
     required this.onOpenUsageDashboard,
+    required this.onOpenProviderManagement,
   });
 
   @override
@@ -640,6 +657,12 @@ class _ChatHeader extends StatelessWidget {
                   ],
                 ),
               ),
+              IconButton.filledTonal(
+                onPressed: onOpenProviderManagement,
+                icon: const Icon(Icons.hub_outlined),
+                tooltip: 'Manage providers',
+              ),
+              const SizedBox(width: 8),
               IconButton.filledTonal(
                 onPressed: onOpenUsageDashboard,
                 icon: const Icon(Icons.query_stats_rounded),
@@ -1107,8 +1130,12 @@ class _EmptyConversationState extends StatelessWidget {
 
 class _EmptyProviderState extends StatelessWidget {
   final Future<void> Function() onRestartOnboarding;
+  final Future<void> Function() onOpenProviderManagement;
 
-  const _EmptyProviderState({required this.onRestartOnboarding});
+  const _EmptyProviderState({
+    required this.onRestartOnboarding,
+    required this.onOpenProviderManagement,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1144,6 +1171,11 @@ class _EmptyProviderState extends StatelessWidget {
                   ),
                   const SizedBox(height: 20),
                   FilledButton(
+                    onPressed: onOpenProviderManagement,
+                    child: const Text('Add provider'),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton(
                     onPressed: onRestartOnboarding,
                     child: const Text('Open onboarding'),
                   ),

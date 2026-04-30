@@ -42,29 +42,39 @@ class ProviderRepository {
     final id = _generateId();
     final now = DateTime.now();
 
-    // Store API key in secure storage if provided
     String? apiKeyRef;
-    if (apiKey != null && apiKey.isNotEmpty) {
-      await _secureStorage.storeProviderApiKey(id, apiKey);
-      apiKeyRef = _secureStorage.generateProviderKeyRef(id);
+    final hasApiKey = apiKey != null && apiKey.isNotEmpty;
+
+    try {
+      // Spec FR-ONB-2: if secure storage succeeds but metadata persistence
+      // fails, roll back the secret write so provider creation remains atomic.
+      if (hasApiKey) {
+        await _secureStorage.storeProviderApiKey(id, apiKey);
+        apiKeyRef = _secureStorage.generateProviderKeyRef(id);
+      }
+
+      final provider = Provider(
+        id: id,
+        kind: kind,
+        displayName: displayName,
+        baseUrl: baseUrl,
+        apiKeyRef: apiKeyRef,
+        defaultModelId: defaultModelId,
+        headers: headers,
+        settings: settings,
+        healthStatus: ProviderHealthStatus.neverChecked,
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      await _dao.insert(provider);
+      return provider;
+    } catch (_) {
+      if (hasApiKey) {
+        await _secureStorage.deleteProviderApiKey(id);
+      }
+      rethrow;
     }
-
-    final provider = Provider(
-      id: id,
-      kind: kind,
-      displayName: displayName,
-      baseUrl: baseUrl,
-      apiKeyRef: apiKeyRef,
-      defaultModelId: defaultModelId,
-      headers: headers,
-      settings: settings,
-      healthStatus: ProviderHealthStatus.neverChecked,
-      createdAt: now,
-      updatedAt: now,
-    );
-
-    await _dao.insert(provider);
-    return provider;
   }
 
   /// Update provider
@@ -75,24 +85,36 @@ class ProviderRepository {
   }) async {
     final trimmedApiKey = newApiKey?.trim();
     final shouldClearApiKey = clearApiKey || trimmedApiKey == '';
+    final previousApiKey = await _secureStorage.getProviderApiKey(provider.id);
 
-    if (shouldClearApiKey) {
-      await _secureStorage.deleteProviderApiKey(provider.id);
-    } else if (trimmedApiKey != null) {
-      await _secureStorage.storeProviderApiKey(provider.id, trimmedApiKey);
+    try {
+      // Spec FR-ONB-2: keep provider metadata and secure storage updates in
+      // sync, restoring the previous secret state if the metadata write fails.
+      if (shouldClearApiKey) {
+        await _secureStorage.deleteProviderApiKey(provider.id);
+      } else if (trimmedApiKey != null) {
+        await _secureStorage.storeProviderApiKey(provider.id, trimmedApiKey);
+      }
+
+      final updated = provider.copyWith(
+        apiKeyRef: shouldClearApiKey
+            ? null
+            : (trimmedApiKey != null
+                ? _secureStorage.generateProviderKeyRef(provider.id)
+                : provider.apiKeyRef),
+        updatedAt: DateTime.now(),
+      );
+
+      await _dao.update(updated);
+      return updated;
+    } catch (_) {
+      if (previousApiKey != null && previousApiKey.isNotEmpty) {
+        await _secureStorage.storeProviderApiKey(provider.id, previousApiKey);
+      } else {
+        await _secureStorage.deleteProviderApiKey(provider.id);
+      }
+      rethrow;
     }
-
-    final updated = provider.copyWith(
-      apiKeyRef: shouldClearApiKey
-          ? null
-          : (trimmedApiKey != null
-              ? _secureStorage.generateProviderKeyRef(provider.id)
-              : provider.apiKeyRef),
-      updatedAt: DateTime.now(),
-    );
-
-    await _dao.update(updated);
-    return updated;
   }
 
   /// Insert or update a provider
@@ -103,17 +125,27 @@ class ProviderRepository {
   }) async {
     final existing = await _dao.getById(provider.id);
     if (existing == null) {
-      if (apiKey != null && apiKey.trim().isNotEmpty) {
-        await _secureStorage.storeProviderApiKey(provider.id, apiKey.trim());
-      }
+      final trimmedApiKey = apiKey?.trim();
+      final hasApiKey = trimmedApiKey != null && trimmedApiKey.isNotEmpty;
 
-      final created = provider.copyWith(
-        apiKeyRef: apiKey != null && apiKey.trim().isNotEmpty
-            ? _secureStorage.generateProviderKeyRef(provider.id)
-            : provider.apiKeyRef,
-      );
-      await _dao.insert(created);
-      return created;
+      try {
+        if (hasApiKey) {
+          await _secureStorage.storeProviderApiKey(provider.id, trimmedApiKey);
+        }
+
+        final created = provider.copyWith(
+          apiKeyRef: hasApiKey
+              ? _secureStorage.generateProviderKeyRef(provider.id)
+              : provider.apiKeyRef,
+        );
+        await _dao.insert(created);
+        return created;
+      } catch (_) {
+        if (hasApiKey) {
+          await _secureStorage.deleteProviderApiKey(provider.id);
+        }
+        rethrow;
+      }
     }
 
     return update(
@@ -158,13 +190,21 @@ class ProviderRepository {
       return null;
     }
 
-    await _secureStorage.deleteProviderApiKey(providerId);
-    final updated = provider.copyWith(
-      apiKeyRef: null,
-      updatedAt: DateTime.now(),
-    );
-    await _dao.update(updated);
-    return updated;
+    final previousApiKey = await _secureStorage.getProviderApiKey(providerId);
+    try {
+      await _secureStorage.deleteProviderApiKey(providerId);
+      final updated = provider.copyWith(
+        apiKeyRef: null,
+        updatedAt: DateTime.now(),
+      );
+      await _dao.update(updated);
+      return updated;
+    } catch (_) {
+      if (previousApiKey != null && previousApiKey.isNotEmpty) {
+        await _secureStorage.storeProviderApiKey(providerId, previousApiKey);
+      }
+      rethrow;
+    }
   }
 
   /// Update health status

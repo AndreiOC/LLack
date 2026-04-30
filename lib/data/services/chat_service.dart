@@ -301,6 +301,13 @@ class ChatService {
     return await adapter.fetchModels(provider);
   }
 
+  /// Spec FR-PRV-3: provider health state is refreshed independently from full
+  /// config validation so the UI can cache and display health checks.
+  Future<ProviderHealthStatus> checkProviderHealth(Provider provider) async {
+    final adapter = _createAdapter(provider);
+    return adapter.healthCheck(provider);
+  }
+
   /// Retry an outbox job by streaming into the existing assistant message.
   Future<void> retryOutboxJob(OutboxJob job) async {
     final conversation = await _conversationRepo.getById(job.conversationId);

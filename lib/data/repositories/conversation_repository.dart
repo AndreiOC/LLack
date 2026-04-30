@@ -100,6 +100,28 @@ class ConversationRepository {
   /// Get active count
   Future<int> getCount() => _dao.getActiveCount();
 
+  /// Count all non-deleted conversations, including archived entries.
+  Future<int> getExistingCount() => _dao.getExistingCount();
+
+  /// Count conversations currently assigned to a provider.
+  Future<int> countUsingProvider(String providerId) {
+    return _dao.countUsingProvider(providerId);
+  }
+
+  /// Spec FR-PRV-1: allow provider deletion to reassign conversations to a
+  /// fallback provider or clear the provider selection entirely.
+  Future<void> reassignProvider(
+    String providerId, {
+    String? fallbackProviderId,
+    String? fallbackModelId,
+  }) {
+    return _dao.reassignProvider(
+      providerId,
+      fallbackProviderId: fallbackProviderId,
+      fallbackModelId: fallbackModelId,
+    );
+  }
+
   String _generateId() {
     return _uuid.v4();
   }

@@ -152,6 +152,43 @@ class ConversationDao {
     return result.first['count'] as int? ?? 0;
   }
 
+  /// Count all non-deleted conversations, including archived ones.
+  Future<int> getExistingCount() async {
+    final result = await _db.rawQuery(
+      "SELECT COUNT(*) as count FROM conversations WHERE deleted_at IS NULL",
+    );
+    return result.first['count'] as int? ?? 0;
+  }
+
+  /// Count conversations currently assigned to a provider.
+  Future<int> countUsingProvider(String providerId) async {
+    final result = await _db.rawQuery(
+      'SELECT COUNT(*) as count FROM conversations WHERE selected_provider_id = ? AND deleted_at IS NULL',
+      [providerId],
+    );
+    return result.first['count'] as int? ?? 0;
+  }
+
+  /// Spec FR-PRV-1: deleting a provider in use must offer a fallback behavior
+  /// for existing conversations instead of leaving them in a broken state.
+  Future<void> reassignProvider(
+    String providerId, {
+    String? fallbackProviderId,
+    String? fallbackModelId,
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.update(
+      'conversations',
+      {
+        'selected_provider_id': fallbackProviderId,
+        'selected_model_id': fallbackProviderId == null ? null : fallbackModelId,
+        'updated_at': now,
+      },
+      where: 'selected_provider_id = ? AND deleted_at IS NULL',
+      whereArgs: [providerId],
+    );
+  }
+
   /// Search conversations by title
   Future<List<Conversation>> searchByTitle(String query) async {
     final maps = await _db.query(
