@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../data/repositories/conversation_repository.dart';
 import '../../domain/entities/entities.dart';
 import 'repository_providers.dart';
 
@@ -46,13 +45,13 @@ class ConversationListState {
 
 class ConversationListNotifier
     extends AutoDisposeAsyncNotifier<ConversationListState> {
-  late final ConversationRepository _conversationRepo;
   static const int _pageSize = 20;
 
   @override
   Future<ConversationListState> build() async {
-    _conversationRepo = await ref.watch(conversationRepositoryProvider.future);
-    final conversations = await _conversationRepo.getPaginated(
+    final conversationRepo =
+        await ref.watch(conversationRepositoryProvider.future);
+    final conversations = await conversationRepo.getPaginated(
       limit: _pageSize,
       offset: 0,
     );
@@ -65,7 +64,10 @@ class ConversationListNotifier
 
   Future<void> load() async {
     state = const AsyncLoading<ConversationListState>();
-    final conversations = await _conversationRepo.getPaginated(
+    final conversationRepo = await ref.read(
+      conversationRepositoryProvider.future,
+    );
+    final conversations = await conversationRepo.getPaginated(
       limit: _pageSize,
       offset: 0,
     );
@@ -77,7 +79,10 @@ class ConversationListNotifier
   }
 
   Future<void> refresh() async {
-    final conversations = await _conversationRepo.getPaginated(
+    final conversationRepo = await ref.read(
+      conversationRepositoryProvider.future,
+    );
+    final conversations = await conversationRepo.getPaginated(
       limit: _pageSize,
       offset: 0,
     );
@@ -95,7 +100,10 @@ class ConversationListNotifier
     state = AsyncData(current.copyWith(isLoadingMore: true));
 
     try {
-      final nextConversations = await _conversationRepo.getPaginated(
+      final conversationRepo = await ref.read(
+        conversationRepositoryProvider.future,
+      );
+      final nextConversations = await conversationRepo.getPaginated(
         limit: _pageSize,
         offset: current.conversations.length,
       );
@@ -119,7 +127,10 @@ class ConversationListNotifier
     state = AsyncData(previous.copyWith(conversations: filtered));
 
     try {
-      await _conversationRepo.delete(id);
+      final conversationRepo = await ref.read(
+        conversationRepositoryProvider.future,
+      );
+      await conversationRepo.delete(id);
       await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
@@ -128,7 +139,10 @@ class ConversationListNotifier
 
   Future<void> restoreConversation(String id) async {
     try {
-      await _conversationRepo.restore(id);
+      final conversationRepo = await ref.read(
+        conversationRepositoryProvider.future,
+      );
+      await conversationRepo.restore(id);
       await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
@@ -137,7 +151,10 @@ class ConversationListNotifier
 
   Future<void> unarchiveConversation(String id) async {
     try {
-      await _conversationRepo.unarchive(id);
+      final conversationRepo = await ref.read(
+        conversationRepositoryProvider.future,
+      );
+      await conversationRepo.unarchive(id);
       await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
@@ -148,7 +165,10 @@ class ConversationListNotifier
     final previous = state.valueOrNull;
 
     try {
-      await _conversationRepo.togglePin(id);
+      final conversationRepo = await ref.read(
+        conversationRepositoryProvider.future,
+      );
+      await conversationRepo.togglePin(id);
       await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       if (previous != null) {
@@ -165,7 +185,10 @@ class ConversationListNotifier
     state = AsyncData(previous.copyWith(conversations: filtered));
 
     try {
-      await _conversationRepo.archive(id);
+      final conversationRepo = await ref.read(
+        conversationRepositoryProvider.future,
+      );
+      await conversationRepo.archive(id);
       await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
@@ -174,7 +197,10 @@ class ConversationListNotifier
 
   Future<void> rename(String id, String newTitle) async {
     try {
-      await _conversationRepo.updateTitle(id, newTitle);
+      final conversationRepo = await ref.read(
+        conversationRepositoryProvider.future,
+      );
+      await conversationRepo.updateTitle(id, newTitle);
       await _reloadPreservingQuery();
     } catch (error, stackTrace) {
       state = AsyncError(error, stackTrace);
@@ -182,7 +208,10 @@ class ConversationListNotifier
   }
 
   Future<List<Conversation>> getArchived() async {
-    return _conversationRepo.getArchived();
+    final conversationRepo = await ref.read(
+      conversationRepositoryProvider.future,
+    );
+    return conversationRepo.getArchived();
   }
 
   Future<void> search(String query) async {
@@ -192,7 +221,10 @@ class ConversationListNotifier
     }
     try {
       final trimmed = query.trim();
-      final results = await _conversationRepo.searchDetailed(trimmed);
+      final conversationRepo = await ref.read(
+        conversationRepositoryProvider.future,
+      );
+      final results = await conversationRepo.searchDetailed(trimmed);
       state = AsyncData(ConversationListState(
         conversations: results.map((result) => result.conversation).toList(),
         snippetsByConversationId: <String, String>{
