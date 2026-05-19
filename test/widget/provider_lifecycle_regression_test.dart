@@ -84,14 +84,31 @@ void main() {
 
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+      await _pumpUntil(
+        tester,
+        () =>
+            _hasText('providerCount:0') &&
+            _hasText('onboardingProviders:0') &&
+            _hasText('conversationCount:0'),
+        description: 'initial async provider state to resolve',
+      );
       expect(find.text('providerCount:0'), findsOneWidget);
+      expect(find.text('onboardingProviders:0'), findsOneWidget);
       expect(find.text('onboardingComplete:false'), findsOneWidget);
 
       await tester.tap(find.widgetWithText(FilledButton, 'Run lifecycle'));
       await tester.pump();
       expect(tester.takeException(), isNull);
 
-      await tester.pumpAndSettle();
+      await _pumpUntil(
+        tester,
+        () =>
+            _hasText('providerCount:1') &&
+            _hasText('onboardingProviders:1') &&
+            _hasText('onboardingComplete:true') &&
+            _hasText('conversationCount:0'),
+        description: 'final lifecycle state to resolve',
+      );
       expect(tester.takeException(), isNull);
 
       expect(find.text('providerCount:1'), findsOneWidget);
@@ -272,4 +289,27 @@ class _FakeChatProviderAdapter implements ChatProviderAdapter {
   Future<ProviderValidationResult> validateConfig(Provider provider) async {
     return ProviderValidationResult.success();
   }
+}
+
+bool _hasText(String text) => find.text(text).evaluate().isNotEmpty;
+
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  required String description,
+  int maxPumps = 200,
+  Duration step = const Duration(milliseconds: 10),
+}) async {
+  for (var i = 0; i < maxPumps; i++) {
+    if (condition()) {
+      return;
+    }
+    await tester.pump(step);
+    final exception = tester.takeException();
+    if (exception != null) {
+      fail('Unexpected exception while waiting for $description: $exception');
+    }
+  }
+
+  fail('Timed out waiting for $description.');
 }
