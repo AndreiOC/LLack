@@ -32,25 +32,23 @@ class OnboardingState {
 }
 
 class OnboardingNotifier extends AsyncNotifier<OnboardingState> {
-  late final AppSettingDao _appSettingDao;
-  late final ProviderRepository _providerRepository;
-  late final ConversationRepository _conversationRepository;
-
   @override
   Future<OnboardingState> build() async {
-    _appSettingDao = await ref.watch(appSettingDaoProvider.future);
-    _providerRepository = await ref.watch(providerRepositoryProvider.future);
-    _conversationRepository =
-        await ref.watch(conversationRepositoryProvider.future);
-    return _loadState();
+    return _loadState(
+      appSettingDao: await ref.watch(appSettingDaoProvider.future),
+      providerRepository: await ref.watch(providerRepositoryProvider.future),
+      conversationRepository:
+          await ref.watch(conversationRepositoryProvider.future),
+    );
   }
 
   Future<void> refresh() async {
-    state = await AsyncValue.guard(_loadState);
+    state = await AsyncValue.guard(_readState);
   }
 
   Future<void> setLocalOnlyMode(bool value) async {
-    await _appSettingDao.setLocalOnlyMode(value);
+    final appSettingDao = await ref.read(appSettingDaoProvider.future);
+    await appSettingDao.setLocalOnlyMode(value);
     await refresh();
   }
 
@@ -58,7 +56,8 @@ class OnboardingNotifier extends AsyncNotifier<OnboardingState> {
     if (endpoint.trim().isEmpty) {
       return;
     }
-    await _appSettingDao.setLastOllamaEndpoint(endpoint.trim());
+    final appSettingDao = await ref.read(appSettingDaoProvider.future);
+    await appSettingDao.setLastOllamaEndpoint(endpoint.trim());
     await refresh();
   }
 
@@ -67,32 +66,48 @@ class OnboardingNotifier extends AsyncNotifier<OnboardingState> {
     String? lastOllamaEndpoint,
   }) async {
     final prefs = await SharedPreferences.getInstance();
+    final appSettingDao = await ref.read(appSettingDaoProvider.future);
     await prefs.setBool('has_completed_onboarding', true);
-    await _appSettingDao.setLocalOnlyMode(localOnlyMode);
+    await appSettingDao.setLocalOnlyMode(localOnlyMode);
     if (lastOllamaEndpoint != null && lastOllamaEndpoint.trim().isNotEmpty) {
-      await _appSettingDao.setLastOllamaEndpoint(lastOllamaEndpoint.trim());
+      await appSettingDao.setLastOllamaEndpoint(lastOllamaEndpoint.trim());
     }
-    await _appSettingDao.completeOnboarding();
+    await appSettingDao.completeOnboarding();
     await refresh();
   }
 
   Future<void> reopen() async {
     final prefs = await SharedPreferences.getInstance();
+    final appSettingDao = await ref.read(appSettingDaoProvider.future);
     await prefs.setBool('has_completed_onboarding', false);
-    await _appSettingDao.setBool(AppSettingKeys.hasCompletedOnboarding, false);
+    await appSettingDao.setBool(AppSettingKeys.hasCompletedOnboarding, false);
     await refresh();
   }
 
-  Future<OnboardingState> _loadState() async {
-    final providers = await _providerRepository.getAll();
-    final conversationCount = await _conversationRepository.getExistingCount();
+  Future<OnboardingState> _readState() async {
+    return _loadState(
+      appSettingDao: await ref.read(appSettingDaoProvider.future),
+      providerRepository: await ref.read(providerRepositoryProvider.future),
+      conversationRepository:
+          await ref.read(conversationRepositoryProvider.future),
+    );
+  }
+
+  Future<OnboardingState> _loadState({
+    required AppSettingDao appSettingDao,
+    required ProviderRepository providerRepository,
+    required ConversationRepository conversationRepository,
+  }) async {
+    final providers = await providerRepository.getAll();
+    final conversationCount = await conversationRepository.getExistingCount();
     final prefs = await SharedPreferences.getInstance();
     final prefsComplete = prefs.getBool('has_completed_onboarding');
-    final isComplete = prefsComplete ?? await _appSettingDao.isOnboardingComplete();
+    final isComplete =
+        prefsComplete ?? await appSettingDao.isOnboardingComplete();
     return OnboardingState(
       isComplete: isComplete,
-      localOnlyMode: await _appSettingDao.isLocalOnlyMode(),
-      lastOllamaEndpoint: await _appSettingDao.getLastOllamaEndpoint(),
+      localOnlyMode: await appSettingDao.isLocalOnlyMode(),
+      lastOllamaEndpoint: await appSettingDao.getLastOllamaEndpoint(),
       providerCount: providers.length,
       conversationCount: conversationCount,
     );

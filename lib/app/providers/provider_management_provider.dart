@@ -2,9 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart' hide Provider;
 
-import '../../data/repositories/conversation_repository.dart';
 import '../../data/repositories/provider_repository.dart';
-import '../../data/services/chat_service.dart';
 import '../../domain/entities/entities.dart';
 import '../../domain/interfaces/chat_provider_adapter.dart';
 import 'chat_service_provider.dart';
@@ -18,18 +16,14 @@ final providerManagementProvider =
 class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
   static const Duration _healthCacheTtl = Duration(minutes: 5);
 
-  late final ProviderRepository _providerRepo;
-  late final ConversationRepository _conversationRepo;
-  late final ChatService _chatService;
   bool _scheduledInitialHealthRefresh = false;
   bool _isRefreshingHealth = false;
 
   @override
   Future<List<Provider>> build() async {
-    _providerRepo = await ref.watch(providerRepositoryProvider.future);
-    _conversationRepo = await ref.watch(conversationRepositoryProvider.future);
-    _chatService = await ref.watch(chatServiceProvider.future);
-    final providers = await _providerRepo.getAll();
+    final providers = await _loadProviders(
+      providerRepo: await ref.watch(providerRepositoryProvider.future),
+    );
 
     if (!_scheduledInitialHealthRefresh) {
       _scheduledInitialHealthRefresh = true;
@@ -43,11 +37,12 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
 
   Future<void> load() async {
     state = const AsyncLoading<List<Provider>>();
-    state = await AsyncValue.guard(_providerRepo.getAll);
+    state = await AsyncValue.guard(_readProviders);
   }
 
   Future<Provider> addProvider(Provider provider, {String? apiKey}) async {
-    final created = await _providerRepo.create(
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    final created = await providerRepo.create(
       displayName: provider.displayName,
       kind: provider.kind,
       baseUrl: provider.baseUrl,
@@ -65,7 +60,8 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
     String? apiKey,
     Map<String, String>? headers,
   }) async {
-    final updated = await _providerRepo.update(
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    final updated = await providerRepo.update(
       provider,
       newApiKey: apiKey != null && apiKey.isNotEmpty ? apiKey : null,
       newHeaders: headers,
@@ -80,7 +76,8 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
     bool clearApiKey = false,
     Map<String, String>? headers,
   }) async {
-    final updated = await _providerRepo.update(
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    final updated = await providerRepo.update(
       provider,
       newApiKey: apiKey != null && apiKey.isNotEmpty ? apiKey : null,
       clearApiKey: clearApiKey,
@@ -91,7 +88,8 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
   }
 
   Future<void> deleteProvider(String id) async {
-    await _providerRepo.delete(id);
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    await providerRepo.delete(id);
     await load();
   }
 
@@ -100,30 +98,36 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
     String? fallbackProviderId,
     String? fallbackModelId,
   }) async {
-    await _conversationRepo.reassignProvider(
+    final conversationRepo = await ref.read(
+      conversationRepositoryProvider.future,
+    );
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    await conversationRepo.reassignProvider(
       id,
       fallbackProviderId: fallbackProviderId,
       fallbackModelId: fallbackModelId,
     );
-    await _providerRepo.delete(id);
+    await providerRepo.delete(id);
     await load();
   }
 
   Future<void> restoreProvider(String id) async {
-    await _providerRepo.restore(id);
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    await providerRepo.restore(id);
     await load();
   }
 
   Future<ProviderValidationResult> validateProvider(String id) async {
-    final provider = await _providerRepo.getById(id);
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    final provider = await providerRepo.getById(id);
     if (provider == null) {
       throw Exception('Provider not found');
     }
 
     final apiKey =
-        provider.requiresApiKey ? await _providerRepo.getApiKey(id) : null;
+        provider.requiresApiKey ? await providerRepo.getApiKey(id) : null;
     final result = await validateDraft(provider, apiKey: apiKey);
-    await _providerRepo.updateHealthStatus(
+    await providerRepo.updateHealthStatus(
       id,
       result.isValid
           ? ProviderHealthStatus.healthy
@@ -137,7 +141,8 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
     String id, {
     bool force = true,
   }) async {
-    final provider = await _providerRepo.getById(id);
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    final provider = await providerRepo.getById(id);
     if (provider == null) {
       throw Exception('Provider not found');
     }
@@ -146,29 +151,35 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
       return provider.healthStatus ?? ProviderHealthStatus.neverChecked;
     }
 
-    final status = await _chatService.checkProviderHealth(provider);
-    await _providerRepo.updateHealthStatus(id, status);
+    final chatService = await ref.read(chatServiceProvider.future);
+    final status = await chatService.checkProviderHealth(provider);
+    await providerRepo.updateHealthStatus(id, status);
     await load();
     return status;
   }
 
   Future<List<ProviderModel>> fetchModels(String id) async {
-    final provider = await _providerRepo.getById(id);
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    final provider = await providerRepo.getById(id);
     if (provider == null) {
       throw Exception('Provider not found');
     }
 
     final apiKey =
-        provider.requiresApiKey ? await _providerRepo.getApiKey(id) : null;
+        provider.requiresApiKey ? await providerRepo.getApiKey(id) : null;
     return fetchModelsForDraft(provider, apiKey: apiKey);
   }
 
-  Future<int> getConversationUsageCount(String providerId) {
-    return _conversationRepo.countUsingProvider(providerId);
+  Future<int> getConversationUsageCount(String providerId) async {
+    final conversationRepo = await ref.read(
+      conversationRepositoryProvider.future,
+    );
+    return conversationRepo.countUsingProvider(providerId);
   }
 
   Future<void> refreshHealthStatuses({bool force = false}) async {
-    final providers = state.valueOrNull ?? await _providerRepo.getAll();
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    final providers = state.valueOrNull ?? await providerRepo.getAll();
     await _refreshHealthStatusesIfNeeded(providers, force: force);
   }
 
@@ -177,7 +188,8 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
     String? apiKey,
   }) async {
     final draftProvider = _providerWithValidationHeaders(provider, apiKey);
-    return _chatService.validateProvider(draftProvider);
+    final chatService = await ref.read(chatServiceProvider.future);
+    return chatService.validateProvider(draftProvider);
   }
 
   Future<List<ProviderModel>> fetchModelsForDraft(
@@ -185,7 +197,8 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
     String? apiKey,
   }) async {
     final draftProvider = _providerWithValidationHeaders(provider, apiKey);
-    return _chatService.fetchModels(draftProvider);
+    final chatService = await ref.read(chatServiceProvider.future);
+    return chatService.fetchModels(draftProvider);
   }
 
   Provider _providerWithValidationHeaders(Provider provider, String? apiKey) {
@@ -219,12 +232,14 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
 
     _isRefreshingHealth = true;
     var changed = false;
+    final providerRepo = await ref.read(providerRepositoryProvider.future);
+    final chatService = await ref.read(chatServiceProvider.future);
 
     try {
       for (final provider in candidates) {
-        final nextStatus = await _chatService.checkProviderHealth(provider);
+        final nextStatus = await chatService.checkProviderHealth(provider);
         if (provider.healthStatus != nextStatus || force) {
-          await _providerRepo.updateHealthStatus(provider.id, nextStatus);
+          await providerRepo.updateHealthStatus(provider.id, nextStatus);
           changed = true;
         }
       }
@@ -243,5 +258,17 @@ class ProviderManagementNotifier extends AsyncNotifier<List<Provider>> {
       return true;
     }
     return DateTime.now().difference(lastCheckedAt) >= _healthCacheTtl;
+  }
+
+  Future<List<Provider>> _readProviders() async {
+    return _loadProviders(
+      providerRepo: await ref.read(providerRepositoryProvider.future),
+    );
+  }
+
+  Future<List<Provider>> _loadProviders({
+    required ProviderRepository providerRepo,
+  }) {
+    return providerRepo.getAll();
   }
 }
